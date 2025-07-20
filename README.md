@@ -1,0 +1,170 @@
+# mosmes - MOS Multi-platform Embedded SDK
+
+## Introduction
+
+The mosmes SDK is a comprehensive development framework designed to simplify cross-platform development for MOS 6502 targets. Rather than forcing developers to manage separate toolchains, include paths, and library configurations for each target platform, mosmes provides a unified build system that leverages the existing llvm-mos compiler infrastructure and picolibc embedded C library to create a cohesive development experience.
+
+The fundamental insight behind mosmes is that developing for various 6502-based platforms should not require separate compilers or drastically different development workflows. Whether targeting a Commodore 64, Apple IIe, NES, or any other MOS 6502 system, the underlying compiler (mos-clang) remains the same. What changes are the include directories, compiler definitions, linked libraries, and memory layouts specific to each platform. mosmes abstracts these differences through a clean, composable build system that allows developers to express their intent at a high level while automatically handling the low-level details.
+
+## Architectural Philosophy
+
+### Platform Composition Through Property Inheritance
+
+## Recommended Directory Structure
+
+mosmes takes a unique approach to project organization by structuring the source tree as the final redistributable package. Rather than separating source and build artifacts, mosmes organizes everything in its final distribution layout from the beginning. This eliminates the need for install steps and makes packaging trivial.
+
+### mosmes SDK Structure
+
+```
+mosmes/
+├── CMakeLists.txt              # Build configuration
+├── dist/                       # Complete redistributable package
+│   ├── cmake/                  # CMake package config (source files)
+│   │   ├── mosmes-config.cmake
+│   │   └── mosmes-config-version.cmake
+│   ├── include/                # Headers (source files)
+│   │   ├── common/
+│   │   │   └── mosmes.h
+│   │   ├── c64/
+│   │   │   └── c64.h
+│   │   └── apple2e/
+│   │       └── apple2e.h
+│   ├── platforms/              # Platform implementations (source files)
+│   │   ├── c64.c
+│   │   └── apple2e.c
+│   └── lib/                    # Built libraries (build outputs)
+│       ├── c64.a
+│       └── apple2e.a
+└── build/                      # Build system artifacts
+    ├── dependencies/           # External dependency builds
+    │   ├── llvm-mos/
+    │   └── picolibc/
+    └── super-ninja/            # Unified super-ninja build (optional)
+```
+
+### User Project Structure
+
+User projects can follow traditional CMake patterns while leveraging mosmes:
+
+```
+myproject/
+├── CMakeLists.txt              # Project configuration using mosmes
+├── src/                        # Project source files
+│   ├── main.c
+│   └── game.c
+├── include/                    # Project headers
+│   └── game.h
+└── build/                      # Build outputs
+    ├── c64/                    # C64 build outputs
+    │   └── game.c64
+    ├── apple2e/                # Apple IIe build outputs
+    │   └── game.apple2e
+    └── dependencies/           # Dependency builds if needed
+```
+
+The key insight is that mosmes itself is organized as a redistributable package where source files live in their final distribution locations. The `dist/` directory contains everything needed for redistribution: CMake configs, headers, platform source code, and built libraries. After building, the entire `dist/` directory can be distributed as a complete SDK package.
+
+The build directory structure accommodates different dependency integration modes and build configurations while maintaining clear separation between the core SDK structure and build system artifacts.
+
+## Architectural Philosophy
+
+### Platform Composition Through Property Inheritance
+
+The core architectural principle of mosmes is that platforms are not monolithic entities but rather compositions of properties that can be inherited and extended. This concept leverages CMake's existing property propagation system to create natural inheritance hierarchies without requiring complex custom infrastructure.
+
+Consider the relationship between different Commodore platforms. A Commodore 64 shares significant characteristics with other Commodore machines - they use similar kernel interfaces, memory-mapped I/O patterns, and development conventions. Rather than duplicating this common functionality across platform definitions, MOS MES models this through inheritance. A base "commodore" platform captures the shared characteristics, while the "c64" platform inherits from commodore and adds C64-specific properties such as memory layout, hardware-specific defines, and platform libraries.
+
+This inheritance is implemented using CMake's INTERFACE libraries as property containers. When a platform inherits from another, it literally links to the parent platform's INTERFACE library, causing CMake's transitive property system to automatically propagate includes, compile definitions, and link libraries down the inheritance chain. This approach requires no custom inheritance tracking or complex property resolution - CMake's existing dependency system handles it naturally.
+
+### Vector-Based Target Multiplication
+
+Beyond platform inheritance, MOS MES introduces the concept of compilation vectors to handle orthogonal build variations. While platforms address "what system am I targeting," vectors address "how do I want to build it." Common vectors include debug versus release configurations, or builds with and without undefined behavior sanitization enabled.
+
+The key insight is that these variations are independent of platform choice. Whether building for C64 or Apple IIe, the distinction between debug and release builds remains consistent. Rather than requiring developers to manually manage every combination of platform and build variant, MOS MES automatically generates the Cartesian product of specified platforms and vectors.
+
+When a developer specifies platforms C64 and Apple IIe along with vectors debug and release, MOS MES automatically creates four distinct build targets: C64 debug, C64 release, Apple IIe debug, and Apple IIe release. Each target receives the appropriate combination of platform properties and vector-specific build settings, ensuring that all variations are available without manual configuration.
+
+### Dependency Integration Strategy
+
+A critical aspect of MOS MES is how it integrates with external dependencies, specifically llvm-mos and picolibc. These projects use different build systems (CMake/ninja for llvm-mos, Meson for picolibc) but are essential components of the MOS development toolchain. MOS MES must accommodate different user preferences for dependency management while maintaining build correctness and efficiency.
+
+The architecture supports multiple integration modes. For users who prefer to manage dependencies externally, MOS MES can locate pre-installed versions of llvm-mos and picolibc through standard CMake find mechanisms. For users who want a fully integrated build experience, MOS MES can use CMake's ExternalProject or FetchContent systems to automatically download, configure, and build these dependencies as part of the main build process.
+
+The most sophisticated integration mode is the super-ninja approach, designed primarily for SDK developers who need optimal incremental build performance across all components. This approach recognizes that both llvm-mos and picolibc ultimately produce ninja build files, and ninja's subninja mechanism can combine multiple build graphs into a unified dependency system. When editing source files in any of the three projects (llvm-mos, picolibc, or MOS MES itself), ninja can identify the minimal set of rebuilds needed across all projects and execute them with optimal parallelization.
+
+## Implementation Strategy
+
+### Platform Definition and Registration
+
+Platform definitions in MOS MES are deliberately simple. Each platform is represented by an INTERFACE library that accumulates properties through CMake's standard target property mechanisms. To define a platform, developers create an INTERFACE library with the platform name and populate it with appropriate includes, compile definitions, and link libraries.
+
+The inheritance mechanism is equally straightforward. A child platform simply links to its parent platform's INTERFACE library using target_link_libraries. This causes CMake to automatically propagate the parent's properties to any target that eventually links to the child platform. There is no need for explicit inheritance tracking, property resolution algorithms, or complex registration systems - CMake's existing transitive dependency system handles everything.
+
+This approach also makes platform definition extremely flexible. Platforms can be defined in separate CMake files and included as needed, or they can be defined inline within a project's build configuration. New platforms can be added simply by creating new INTERFACE libraries and establishing their inheritance relationships.
+
+### Vector Implementation and Target Generation
+
+Vector implementation requires more active build system participation since CMake doesn't natively understand the concept of automatic target multiplication. The core mechanism is a nested loop structure that iterates over specified platforms and vectors, creating unique targets for each combination.
+
+Each generated target receives a distinct name that encodes both the platform and vector combination, ensuring no naming conflicts while maintaining human readability. The target generation process applies platform properties through linking to the appropriate INTERFACE libraries, then applies vector-specific properties through additional CMake commands.
+
+Vector definitions themselves are typically implemented as CMake functions that accept a target name and apply appropriate properties. For example, a "debug" vector function might add debug compile flags and link to debug versions of libraries, while a "release" vector function might enable optimization flags and strip debugging information.
+
+### Dependency Resolution and Build Orchestration
+
+The dependency integration challenge requires careful attention to build system boundaries and dependency propagation. Each integration mode has different implications for build reproducibility, development workflow, and system requirements.
+
+The external dependency mode treats llvm-mos and picolibc as system-provided components. MOS MES uses standard CMake find mechanisms to locate installed versions and fails gracefully if they're not available. This mode is most appropriate for production builds or environments where dependency versions are carefully controlled through external package management.
+
+The integrated dependency mode uses CMake's ExternalProject system to automatically build required dependencies. This ensures version consistency and provides a self-contained build experience, but at the cost of longer initial build times and increased system requirements. The ExternalProject approach maintains proper dependency ordering - picolibc won't begin building until llvm-mos is complete, and MOS MES platform libraries won't build until picolibc is available.
+
+The super-ninja mode represents the most sophisticated integration approach. It recognizes that ninja is ultimately responsible for executing build commands in all three projects and leverages ninja's subninja mechanism to create a unified build graph. A master ninja file includes the build graphs from llvm-mos, picolibc, and MOS MES, then declares high-level ordering dependencies between projects. This allows ninja to see cross-project dependencies and optimize build execution accordingly.
+
+### Cross-Project Dependency Management
+
+The super-ninja approach requires careful management of cross-project dependencies to avoid complexity explosion. Rather than attempting to enumerate every individual dependency between projects, MOS MES uses coarse-grained ordering constraints. The master ninja file declares that picolibc as a whole depends on llvm-mos as a whole, and MOS MES as a whole depends on picolibc as a whole.
+
+This approach leverages the fact that each individual project already has correct internal dependency tracking through its native build system. The super-ninja layer only needs to ensure proper ordering between projects, not micromanage internal dependencies within each project. When a source file changes in llvm-mos, ninja rebuilds the affected components within llvm-mos, then cascades to rebuild affected components in picolibc and MOS MES.
+
+For users who build dependencies externally, the super-ninja approach becomes irrelevant since the external dependencies don't have accessible build graphs. In such cases, MOS MES falls back to traditional CMake dependency management, using imported targets to represent externally-built components.
+
+## User Experience Design
+
+### Project Configuration Interface
+
+From a user perspective, MOS MES aims to make cross-platform development as simple as single-platform development. A typical project configuration might specify source files, target platforms, and desired build vectors in a clean, declarative syntax. The build system then handles all the complexity of generating appropriate targets, applying platform properties, and managing dependencies.
+
+The user interface emphasizes composition and reuse. Developers can define custom platforms that inherit from existing ones, allowing for easy customization without losing the benefits of shared infrastructure. Similarly, custom vectors can be defined to handle project-specific build requirements while maintaining compatibility with standard platforms.
+
+### Development Workflow Integration
+
+MOS MES is designed to integrate naturally with existing development workflows. Developers using IDEs can import the generated CMake projects and benefit from proper syntax highlighting, code completion, and debugging support for their target platforms. Command-line developers can use standard CMake build commands and benefit from parallel builds and incremental compilation.
+
+The vector system ensures that developers can easily switch between different build configurations without manually reconfiguring their environment. A single build command can generate debug and release versions for multiple platforms, making it easy to test changes across different target systems.
+
+## Technical Considerations
+
+### Build Performance and Scalability
+
+The platform inheritance system is designed for minimal overhead. Since it leverages CMake's existing property propagation mechanisms, there is no additional runtime cost for inheritance chains. Property resolution happens once during build system generation, not repeatedly during compilation.
+
+The vector multiplication approach does increase the number of build targets, which can impact build system generation time for projects with many platform and vector combinations. However, the impact is linear in the number of combinations, and CMake handles large numbers of targets efficiently. More importantly, the generated targets can build in parallel, so total build time often decreases despite the larger number of targets.
+
+The super-ninja integration provides the best incremental build performance by allowing ninja to see the complete dependency graph across all projects. This enables optimal build scheduling and minimal rebuilds when source files change. However, this mode requires all projects to be co-located and built from source, limiting its applicability to development scenarios.
+
+### Extensibility and Customization
+
+The architecture prioritizes extensibility through composition rather than complex plugin systems. New platforms are added by creating new INTERFACE libraries, new vectors are added by defining new property application functions, and new dependency integration modes can be added through additional CMake modules.
+
+This approach ensures that MOS MES can adapt to new 6502 platforms and development requirements without requiring changes to the core system. Platform definitions are self-contained and can be distributed independently, allowing for community-driven expansion of platform support.
+
+The system also accommodates projects with unusual requirements through escape hatches. Developers can always fall back to manual target creation and property application for cases that don't fit the standard platform and vector model.
+
+## Future Evolution
+
+As the MOS development ecosystem evolves, MOS MES is positioned to grow organically. New platforms can be added incrementally, new vector types can be introduced for emerging development practices, and new dependency integration modes can be developed for different deployment scenarios.
+
+The architecture's emphasis on leveraging existing CMake mechanisms rather than creating custom infrastructure ensures long-term maintainability and compatibility with evolving CMake features. As CMake continues to improve its support for cross-compilation and external dependencies, MOS MES can benefit from these improvements without requiring architectural changes.
+
+The super-ninja integration represents a forward-looking approach that could be extended to additional projects in the MOS ecosystem. As more components adopt ninja-based builds, they can be incorporated into the unified build graph, providing increasingly sophisticated development experiences for MOS developers.
