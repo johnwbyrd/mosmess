@@ -1,13 +1,12 @@
-# Superninja Integration
+# Superninja
 
 Superninja enables configure-time visibility of build dependencies across multiple projects by leveraging ninja's subninja mechanism.
 
 The core problems:
+- Multiple incompatible build languages (cmake, meson, gn, etc.)
 - Isolated project builds with no cross-project incremental capabilities
 - Forced sequential builds that waste time and prevent parallelization
-- Hidden dependencies that can't be properly expressed
-- Cumbersome development workflows requiring manual rebuild coordination
-- Local projects becoming second-class citizens dependent on external mechanisms
+- CMake cannot "know" about other CMake dependency graphs, except its current one
 
 Why superninja uniquely solves these:
 - True cross-project incremental builds with automatic dependency detection
@@ -15,6 +14,7 @@ Why superninja uniquely solves these:
 - Explicit cross-project dependency expression
 - Single-command builds across all projects
 - Uniform treatment of all projects in the build graph
+- Build system agnostic integration with perfect dependency tracking
 
 Why alternatives can't solve this:
 - ExternalProject: Build-time execution prevents dependency visibility
@@ -36,6 +36,8 @@ When actively developing multiple related projects, you're forced into a cumbers
 
 Your main project becomes dependent on external build system mechanisms (ExternalProject, FetchContent) that don't integrate cleanly with your local build. You lose the ability to treat all projects uniformly.
 
+On top of all that, CMake isn't the only build system out there.  Many real-world projects rely on meson, gn, shinobi, and other build engines, all of which know nothing about one another.
+
 ## The Superninja Solution
 
 Superninja solves these problems by creating a **unified build graph** where ninja can see all dependencies across all projects and make optimal build decisions.
@@ -49,6 +51,8 @@ You can express precise dependencies between projects: "library in project C dep
 Modify any file in any project and run a single `ninja` command. The build system automatically determines what needs rebuilding across all projects and executes the minimal necessary work.
 
 Your local project is just another participant in the unified build graph. There's no distinction between "local" and "external" projects - all are first-class citizens with proper dependency representation.
+
+Any build system that generates ninja files (CMake, Meson, rg, custom generators) can integrate seamlessly. The dependency tracking remains perfect regardless of the underlying build system, preserving all incremental build capabilities without losing any build system specific optimizations.
 
 ## Why This Can't Be Solved Any Other Way
 
@@ -139,6 +143,7 @@ Forces reconfiguration of all dependencies even if ninja files exist. Useful for
 ## Benefits
 
 - Complete dependency visibility across projects
+- Build language independent architecture
 - Optimal build scheduling via unified ninja graph
 - User controls all configuration commands and tools
 - Variable expansion enables unlimited flexibility

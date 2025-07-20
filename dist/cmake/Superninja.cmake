@@ -73,102 +73,116 @@ if(NOT DEFINED SUPERNINJA_FORCE_RECONFIGURE)
   set(SUPERNINJA_FORCE_RECONFIGURE OFF)
 endif()
 
+
 function(Superninja_Declare name)
-  set(options)
-  set(oneValueArgs CONFIGURE_COMMAND NINJA_FILE)
-  set(multiValueArgs)
-  cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
-
-  if(NOT ARG_CONFIGURE_COMMAND)
-    message(FATAL_ERROR "Superninja_Declare: CONFIGURE_COMMAND is required")
-  endif()
-
-  # TODO: Calculate automatic directories based on SUPERNINJA_BASE
-  # TODO: Use ExternalProject pattern if SUPERNINJA_BASE not set
-  # TODO: Store auto-calculated directories for variable expansion
+  # Declare a dependency with source location and build configuration.
+  #
+  # Superninja_Declare(<name>
+  #   [GIT_REPOSITORY <repository>]
+  #   [GIT_TAG <tag>]
+  #   [... all FetchContent_Declare arguments ...]
+  #   CONFIGURE_COMMAND <command>
+  #   [NINJA_FILE <path>]
+  # )
+  #
+  # This function accepts all parameters that FetchContent_Declare accepts, plus superninja-specific
+  # parameters. It filters out the superninja parameters (CONFIGURE_COMMAND, NINJA_FILE) and forwards
+  # all other parameters directly to FetchContent_Declare unchanged.
+  #
+  # Superninja-specific arguments:
+  #   CONFIGURE_COMMAND - Command to run to configure the dependency and generate build.ninja
+  #   NINJA_FILE - Optional explicit path where build.ninja will be created
+  #
+  # FetchContent arguments:
+  #   All FetchContent_Declare parameters are accepted and forwarded:
+  #   GIT_REPOSITORY, GIT_TAG, URL, URL_HASH, SOURCE_DIR, etc.
+  #
+  # The CONFIGURE_COMMAND will be executed by Superninja_Populate or Superninja_MakeAvailable
+  # to generate the build.ninja file that will be included via subninja directive.
   
-  # Store metadata
-  set_property(GLOBAL APPEND PROPERTY _SUPERNINJA_DECLARED_DEPS "${name}")
-  set_property(GLOBAL PROPERTY _SUPERNINJA_${name}_CONFIGURE_COMMAND "${ARG_CONFIGURE_COMMAND}")
-  
-  if(ARG_NINJA_FILE)
-    set_property(GLOBAL PROPERTY _SUPERNINJA_${name}_NINJA_FILE "${ARG_NINJA_FILE}")
-  else()
-    # TODO: Set auto-calculated ninja file location
-    message(STATUS "Superninja: Would auto-calculate NINJA_FILE for ${name}")
-  endif()
-  
-  # Remove our custom args and forward to FetchContent_Declare
-  set(fc_args ${ARGN})
-  list(REMOVE_ITEM fc_args CONFIGURE_COMMAND NINJA_FILE ${ARG_CONFIGURE_COMMAND} ${ARG_NINJA_FILE})
-  FetchContent_Declare(${name} ${fc_args})
+  # TODO: Implement Superninja_Declare
+  message(STATUS "Superninja_Declare: Stub for ${name}")
 endfunction()
 
 function(Superninja_Populate name)
-  # Verify declared
-  get_property(declared_deps GLOBAL PROPERTY _SUPERNINJA_DECLARED_DEPS)
-  if(NOT name IN_LIST declared_deps)
-    message(FATAL_ERROR "Superninja_Populate: '${name}' not declared")
-  endif()
-
-  # Delegate to FetchContent
-  FetchContent_Populate(${name})
+  # Download sources and run configure step for a declared dependency.
+  #
+  # Superninja_Populate(<name>)
+  #
+  # This function accepts all parameters that FetchContent_Populate accepts and forwards
+  # them directly to FetchContent_Populate unchanged. It then adds the superninja configure
+  # step to generate the build.ninja file.
+  #
+  # Arguments:
+  #   All FetchContent_Populate parameters are accepted and forwarded unchanged.
+  #   Typically just the dependency name, but can include any FetchContent_Populate options.
+  #
+  # Behavior:
+  # 1. Forwards all parameters to FetchContent_Populate to download sources
+  # 2. Executes the stored CONFIGURE_COMMAND to generate build.ninja
+  # 3. The ninja file location is either user-specified (NINJA_FILE) or automatically calculated
+  #
+  # The dependency must have been previously declared with Superninja_Declare().
+  # After this function completes, the build.ninja file will exist and be ready for
+  # inclusion in Superninja_Finalize().
+  
+  # TODO: Implement Superninja_Populate
+  message(STATUS "Superninja_Populate: Stub for ${name}")
 endfunction()
 
 function(Superninja_MakeAvailable)
-  foreach(name ${ARGV})
-    # Verify declared
-    get_property(declared_deps GLOBAL PROPERTY _SUPERNINJA_DECLARED_DEPS)
-    if(NOT name IN_LIST declared_deps)
-      message(FATAL_ERROR "Superninja_MakeAvailable: '${name}' not declared")
-    endif()
-
-    # Populate if needed
-    FetchContent_GetProperties(${name})
-    if(NOT ${name}_POPULATED)
-      FetchContent_Populate(${name})
-    endif()
-
-    # Get metadata
-    get_property(configure_cmd GLOBAL PROPERTY _SUPERNINJA_${name}_CONFIGURE_COMMAND)
-    get_property(ninja_file GLOBAL PROPERTY _SUPERNINJA_${name}_NINJA_FILE)
-    
-    # TODO: Perform @VAR@ variable expansion on configure_cmd
-    # TODO: Set up @SUPERNINJA_*@ variables based on calculated directories
-    
-    # Configure if needed
-    if(SUPERNINJA_FORCE_RECONFIGURE OR NOT EXISTS "${ninja_file}")
-      # TODO: Execute expanded configure command via execute_process
-      # TODO: Validate ninja file was created
-      message(STATUS "Superninja: Would configure ${name}")
-      message(STATUS "  Command: ${configure_cmd}")
-      message(STATUS "  Expected ninja file: ${ninja_file}")
-    endif()
-    
-    # Register for integration
-    set_property(GLOBAL APPEND PROPERTY _SUPERNINJA_AVAILABLE_DEPS "${name}")
-  endforeach()
+  # Download sources and run configure step for multiple dependencies.
+  #
+  # Superninja_MakeAvailable(<name1> [<name2> ...])
+  #
+  # This function accepts all parameters that FetchContent_MakeAvailable accepts and forwards
+  # them directly to FetchContent_MakeAvailable unchanged. It then adds the superninja configure
+  # step for each dependency to generate build.ninja files.
+  #
+  # Arguments:
+  #   All FetchContent_MakeAvailable parameters are accepted and forwarded unchanged.
+  #   Typically dependency names, but can include any FetchContent_MakeAvailable options.
+  #
+  # Behavior:
+  # 1. Forwards all parameters to FetchContent_MakeAvailable to download sources
+  # 2. For each dependency, executes the stored CONFIGURE_COMMAND to generate build.ninja
+  # 3. Ninja file locations are automatically calculated (not user-specified)
+  # 4. Registers dependencies as available for Superninja_Finalize()
+  #
+  # All dependencies must have been previously declared with Superninja_Declare().
+  # After this function completes, all build.ninja files will exist and be ready for
+  # inclusion in Superninja_Finalize().
+  
+  # TODO: Implement Superninja_MakeAvailable  
+  message(STATUS "Superninja_MakeAvailable: Stub for ${ARGV}")
 endfunction()
 
 function(Superninja_Finalize)
-  set(options)
-  set(oneValueArgs OUTPUT)
-  set(multiValueArgs DEPENDENCIES)
-  cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
-
-  if(NOT ARG_OUTPUT)
-    message(FATAL_ERROR "Superninja_Finalize: OUTPUT is required")
-  endif()
-
-  get_property(available_deps GLOBAL PROPERTY _SUPERNINJA_AVAILABLE_DEPS)
-
-  # TODO: Generate master ninja file with subninja directives
-  # TODO: Parse DEPENDENCIES and create phony targets
-  # TODO: Include mosmess's own ninja file
+  # Generate master ninja file that includes all dependency ninja files via subninja.
+  #
+  # Superninja_Finalize(
+  #   OUTPUT <master-ninja-file>
+  #   [DEPENDENCIES <target> DEPENDS_ON <dependency> ...]
+  # )
+  #
+  # This function creates a master ninja file that unifies all dependency build graphs
+  # into a single ninja execution context, enabling cross-project incremental builds
+  # and dependency tracking.
+  #
+  # Arguments:
+  #   OUTPUT - Path where the master ninja file will be created
+  #   DEPENDENCIES - Optional cross-project dependency specifications
+  #                 Format: target DEPENDS_ON dependency [target DEPENDS_ON dependency ...]
+  #
+  # Behavior:
+  # 1. Creates master ninja file with subninja directives for all available dependencies
+  # 2. Includes main project's ninja file if it exists
+  # 3. Generates phony targets for cross-project dependencies
+  # 4. All paths are resolved relative to the master ninja file location
+  #
+  # The resulting master ninja file can be executed with ninja to build all projects
+  # with optimal scheduling and dependency tracking across project boundaries.
   
-  message(STATUS "Superninja: Would generate ${ARG_OUTPUT}")
-  message(STATUS "  Available dependencies: ${available_deps}")
-  if(ARG_DEPENDENCIES)
-    message(STATUS "  Dependencies: ${ARG_DEPENDENCIES}")
-  endif()
+  # TODO: Implement Superninja_Finalize
+  message(STATUS "Superninja_Finalize: Stub")
 endfunction()
