@@ -38,61 +38,43 @@ Unlike FetchContent or ExternalProject, Prerequisites can execute immediately du
 
 ## Dual Execution Model
 
-The Prerequisites system supports two execution modes:
+The Prerequisites system operates in a fundamentally different way than traditional CMake dependency management. It provides both immediate execution during configuration and deferred execution through build targets, solving the bootstrapping problem while maintaining proper dependency tracking.
 
-### 1. Immediate Execution
+When CMake processes a `Prerequisite_Add()` call before the `project()` statement, the system can execute build steps immediately using `execute_process()`. This immediate execution is essential for bootstrapping scenarios where you need to build the compiler that CMake will detect when it reaches the `project()` command. The configuration process blocks while these commands run, which is why initial configuration can be slow when building large prerequisites like LLVM. However, this synchronous execution ensures that by the time `project()` is called, all necessary tools and libraries exist and are ready for detection.
 
-When stamps don't exist or when forced, prerequisites execute immediately:
-- Uses `execute_process()` to run commands during configuration
-- Essential for bootstrapping compilers before `project()`
-- Blocks until completion
-- Creates stamps to prevent unnecessary re-execution
+Simultaneously, the system creates standard CMake build targets for every prerequisite, regardless of when `Prerequisite_Add()` was called. These targets form a proper dependency chain using `add_custom_command()` with stamp files as outputs. For example, the `llvm-mos-build` target depends on the configure stamp file and produces the build stamp file. This integration with CMake's normal dependency system means that your main project can depend on prerequisite targets just like any other dependency, enabling incremental rebuilds and proper parallel execution during development.
 
-### 2. Target-Based Execution
+The dual nature of this system provides maximum flexibility. During initial setup, prerequisites build immediately to bootstrap the environment. During subsequent development, the same prerequisites participate in the normal build process, rebuilding only when their dependencies change. This design elegantly solves both the chicken-and-egg problem of building compilers and the ongoing need for incremental rebuilds during development.
 
-The system always creates CMake targets for build-time dependency tracking:
-- Creates targets like `llvm-mos-build`, `llvm-mos-install`, etc.
-- Uses `add_custom_command()` chains with stamp files as outputs
-- Integrates with CMake's normal dependency system
-- Enables incremental rebuilds and parallel builds
+## Dependency Tracking Methods
+
+The Prerequisites system offers two ways of tracking whether a prerequisite needs some or all of its build steps reiterated.
+
+By default, the system uses stamp-based tracking, where each successfully completed step creates a simple timestamp file. When a prerequisite is requested, the system checks whether these stamp files exist. If they do, the step is considered complete and is skipped. If not, the step runs along with all subsequent steps. This approach is fast and simple - checking for file existence is nearly instantaneous, and the logic is straightforward. However, it's also quite coarse-grained. Any change to the prerequisite requires manually deleting stamp files to force a rebuild, and there's no way to detect which specific files changed or whether a rebuild is actually necessary.
+
+The alternative is file dependency tracking, where you explicitly tell each step which files it depends on using glob patterns. Before running a step, the system checks whether any of these files have been modified more recently than the step's stamp file. This enables much more intelligent rebuild behavior. For instance, if you modify a source file in LLVM, only the build, install, and test steps need to re-run - the expensive configure step can be skipped because CMakeLists.txt hasn't changed. This granular tracking is especially valuable during active development of prerequisites, where you might be iterating on patches or modifications.
+
+The cost of this precision is complexity and performance. File dependency tracking requires scanning potentially thousands of files to check their timestamps, which can add overhead to every build. More importantly, it requires understanding the internal structure of each prerequisite well enough to write accurate glob patterns. If your patterns are too broad, you'll rebuild unnecessarily. If they're too narrow, you'll miss changes and get stale builds. The patterns may also need maintenance as the prerequisite project evolves.
+
+In practice, the best approach often combines both methods. Use stamp-based tracking for stable steps that rarely change, like download and configure, while adding file dependency tracking to steps that you're actively modifying, like build and install. This gives you fast incremental builds where they matter most without the overhead of tracking every possible file. The system is designed to make this mixed approach natural - simply add `*_DEPENDS` options only to the steps where you need fine-grained tracking.
 
 ### How It Works
 
-When you call `Prerequisite_Add()`:
-1. Checks if steps need to run (missing stamps or forced execution)
-2. If needed and called before `project()`: Executes immediately via `execute_process()`
-3. Always creates build-time targets using `add_custom_command()` that:
-   - Depend on the previous step's stamp file
-   - Execute the step's command directly
-   - Create their own stamp file upon successful completion
-4. Subsequent project targets can depend on these prerequisite targets
+The `Prerequisite_Add()` function orchestrates both execution modes seamlessly. When called before `project()`, it first checks whether the prerequisite's steps need to run by examining stamp files. If stamps are missing or forced execution is requested, it immediately executes the necessary steps using `execute_process()`, blocking until completion. This ensures that compilers and libraries exist before CMake's project initialization needs them.
+
+Regardless of when it's called or whether immediate execution occurred, `Prerequisite_Add()` always creates a complete set of build-time targets. These targets form a dependency chain where each step depends on the previous step's stamp file and produces its own stamp as output. The build targets use the exact same commands as immediate execution, maintaining consistency. This dual approach means that subsequent project targets can depend on prerequisites naturally - if the prerequisite already ran at configure time, the build targets see valid stamps and do nothing. If not, or if files have changed, the build targets execute the necessary steps.
 
 ### Implementation Details
 
-Both execution modes share the same underlying step logic:
+The key to the Prerequisites system's flexibility lies in how both execution modes share the same underlying step logic. Whether a step runs immediately during configuration or later during the build, the actual commands executed are identical. This consistency ensures that prerequisites behave the same way regardless of when they execute.
 
-**Immediate Execution (Configuration Time):**
-- Triggered when stamps are missing or forced
-- Uses `execute_process()` to run commands
-- CMake code checks return status and creates stamps
-- Blocking - configuration waits for completion
-- Essential for bootstrapping scenarios
+During immediate execution at configuration time, the system uses CMake's `execute_process()` to run commands synchronously. After each command completes, CMake code checks the return status and creates stamp files to record successful completion. This blocking behavior means configuration waits for each prerequisite to finish, which is why bootstrapping can take significant time but ensures everything is ready before proceeding.
 
-**Target-Based Execution (Build Time):**
-- Always created via `add_custom_command()`
-- Stamp files serve as OUTPUT dependencies
-- Commands run directly in the build tool
-- Non-blocking during configuration
-- Provides proper incremental build support
-
-The beauty of this design is that the same prerequisites can bootstrap a toolchain from scratch AND integrate seamlessly with incremental development workflows.
+For build-time execution, the system creates chains of `add_custom_command()` rules where stamp files serve as outputs. This leverages CMake's standard dependency tracking - when make or ninja sees that a stamp file is missing or out of date, it runs the associated command. The commands execute directly in the build tool without reinvoking CMake, providing efficient incremental builds. Since these targets are created during configuration but execute during build, there's no configuration-time blocking for prerequisites that already have valid stamps.
 
 ### Performance Implications
 
-- **First Run**: Initial configuration may be slow if prerequisites need to be built
-- **Incremental**: Subsequent configurations are fast - stamps prevent re-execution
-- **Build Time**: Normal incremental build performance via standard dependency tracking
-- **Development**: Changes to prerequisites trigger minimal rebuilds
+The performance characteristics of the Prerequisites system vary dramatically between first run and incremental use. Initial configuration when prerequisites need building can take hours for large projects like LLVM, as the entire compiler must be built before CMake can proceed. However, subsequent configurations are fast because the stamp files prevent re-execution of completed steps. During normal development, the system provides standard incremental build performance through CMake's dependency tracking, with changes to prerequisites triggering only the minimal necessary rebuilds. This design accepts slow initial setup as the price for enabling true bootstrapping from source.
 
 ## Core Concepts
 
@@ -109,15 +91,9 @@ Prerequisites are built through a series of ordered steps:
 
 ### Step Execution Rules
 
-When a step is requested, that step and all subsequent steps are executed:
+The Prerequisites system enforces a strict execution order to maintain consistency. When any step is requested, whether through immediate execution or build targets, the system runs that step and all subsequent steps in the chain. This design reflects the reality that later steps depend on earlier ones - you cannot install what hasn't been built, and changes to the build typically invalidate the installation.
 
-- Requesting "download" → runs download, update, configure, build, install, test
-- Requesting "configure" → runs configure, build, install, test  
-- Requesting "build" → runs build, install, test
-- Requesting "install" → runs install, test
-- Requesting "test" → runs only test
-
-This ensures consistency - if you rebuild, you must reinstall and retest.
+For example, requesting the "build" step doesn't just compile the software. It triggers build, install, and test in sequence. This ensures that if you've made changes significant enough to require rebuilding, those changes are properly propagated through installation and testing. Similarly, requesting "download" runs the entire chain from download through test, because new source code requires reconfiguration, rebuilding, and reinstallation. Only the "test" step stands alone, as testing can be repeated without affecting other steps. This execution model prevents subtle bugs that arise from partially updated prerequisites where, for instance, headers in the install directory don't match the rebuilt libraries.
 
 ### Stamp Files
 
@@ -241,6 +217,47 @@ INSTALL_COMMAND make -C @PREREQUISITE_BINARY_DIR@ install
 **With LOG_* true**: Step output is captured to automatically named files like `<name>-build-out.log` in LOG_DIR, console shows only summary messages
 
 Example: Without `LOG_BUILD`, you see thousands of compiler lines. With `LOG_BUILD true`, you see "Building prerequisite... (logged to file)" and can examine the log file if needed.
+
+#### File Dependency Options
+
+These options enable intelligent rebuild behavior by tracking changes to specific files within a prerequisite's source tree, rather than relying solely on timestamp-based stamp files.
+
+- `DOWNLOAD_DEPENDS <args...>` - File dependency arguments for download step
+- `UPDATE_DEPENDS <args...>` - File dependency arguments for update step
+- `CONFIGURE_DEPENDS <args...>` - File dependency arguments for configure step
+- `BUILD_DEPENDS <args...>` - File dependency arguments for build step
+- `INSTALL_DEPENDS <args...>` - File dependency arguments for install step
+- `TEST_DEPENDS <args...>` - File dependency arguments for test step
+
+**Purpose:**
+File dependency tracking allows prerequisites to rebuild only when their internal dependencies have actually changed. For example, if you modify source files in a prerequisite, only the build/install/test steps need to re-run, not the download/configure steps. This provides more granular and efficient rebuild behavior than simple timestamp checking.
+
+**File Dependency Behavior:**
+- All arguments are passed directly to CMake's `file()` command
+- First argument should typically be `GLOB` or `GLOB_RECURSE`
+- Second argument should typically be `@PREREQUISITE_FILE_RESULT@` (used internally by system)
+- Remaining arguments are glob patterns with variable substitution applied
+- If file dependencies exist, they override timestamp-based stamp checking
+- Step runs if any dependency file is newer than the stamp, or if stamp doesn't exist
+
+Examples:
+```cmake
+Prerequisite_Add(my_project
+  GIT_REPOSITORY https://github.com/example/project.git
+  GIT_TAG main
+  
+  # Configure step depends on CMake files
+  CONFIGURE_DEPENDS GLOB @PREREQUISITE_FILE_RESULT@ CMakeLists.txt cmake/*.cmake
+  
+  # Build step depends on source files recursively  
+  BUILD_DEPENDS GLOB_RECURSE @PREREQUISITE_FILE_RESULT@ 
+    @PREREQUISITE_SOURCE_DIR@/*.cpp 
+    @PREREQUISITE_SOURCE_DIR@/*.h
+    
+  # Install step depends on build outputs
+  INSTALL_DEPENDS GLOB @PREREQUISITE_FILE_RESULT@ @PREREQUISITE_BINARY_DIR@/bin/*
+)
+```
 
 #### Control Options
 - `BUILD_ALWAYS` - Always rebuild regardless of stamps
