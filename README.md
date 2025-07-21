@@ -37,7 +37,7 @@ Traditional CMake projects separate source, build, and install directories. mosm
 - CMake cache and generation files
 - Object files and intermediate outputs
 - Dependency build trees (llvm-mos, picolibc)
-- Ninja files for superninja integration
+- Ninja files
 - Test outputs and logs
 
 In short: **If you need it to develop a program for the 6502, it goes in dist/. Everything else goes in build/.**
@@ -73,9 +73,7 @@ mosmess/
     ├── dependencies/           # Full dependency build trees
     │   ├── llvm-mos/           # Complete llvm-mos build
     │   └── picolibc/           # Complete picolibc build
-    ├── obj/                    # Object files
-    └── superninja/             # Unified ninja files
-        └── build.ninja         # Master ninja file
+    └── obj/                    # Object files
 ```
 
 ### Cleaning the Build
@@ -106,11 +104,9 @@ When a developer specifies platforms C64 and Apple IIe along with vectors debug 
 
 ### Dependency Integration Strategy
 
-A critical aspect of mosmess is how it integrates with external dependencies, specifically llvm-mos and picolibc. These projects use different build systems (CMake/ninja for llvm-mos, Meson for picolibc) but are essential components of the MOS development toolchain. mosmess must accommodate different user preferences for dependency management while maintaining build correctness and efficiency.
+A critical aspect of mosmess is how it integrates with external dependencies, specifically llvm-mos and picolibc. These projects use different build systems (CMake for llvm-mos, Meson for picolibc) but are essential components of the MOS development toolchain. mosmess must accommodate different user preferences for dependency management while maintaining build correctness and efficiency.
 
 The architecture supports multiple integration modes. For users who prefer to manage dependencies externally, mosmess can locate pre-installed versions of llvm-mos and picolibc through standard CMake find mechanisms. For users who want a fully integrated build experience, mosmess can use CMake's ExternalProject or FetchContent systems to automatically download, configure, and build these dependencies as part of the main build process.
-
-The most sophisticated integration mode is the super-ninja approach, designed primarily for SDK developers who need optimal incremental build performance across all components. This approach recognizes that both llvm-mos and picolibc ultimately produce ninja build files, and ninja's subninja mechanism can combine multiple build graphs into a unified dependency system. When editing source files in any of the three projects (llvm-mos, picolibc, or mosmess itself), ninja can identify the minimal set of rebuilds needed across all projects and execute them with optimal parallelization.
 
 ## Implementation Strategy
 
@@ -138,15 +134,11 @@ The external dependency mode treats llvm-mos and picolibc as system-provided com
 
 The integrated dependency mode uses CMake's ExternalProject system to automatically build required dependencies. This ensures version consistency and provides a self-contained build experience, but at the cost of longer initial build times and increased system requirements. The ExternalProject approach maintains proper dependency ordering - picolibc won't begin building until llvm-mos is complete, and mosmess platform libraries won't build until picolibc is available.
 
-The super-ninja mode represents the most sophisticated integration approach. It recognizes that ninja is ultimately responsible for executing build commands in all three projects and leverages ninja's subninja mechanism to create a unified build graph. A master ninja file includes the build graphs from llvm-mos, picolibc, and mosmess, then declares high-level ordering dependencies between projects. This allows ninja to see cross-project dependencies and optimize build execution accordingly.
-
 ### Cross-Project Dependency Management
 
-The super-ninja approach requires careful management of cross-project dependencies to avoid complexity explosion. Rather than attempting to enumerate every individual dependency between projects, mosmess uses coarse-grained ordering constraints. The master ninja file declares that picolibc as a whole depends on llvm-mos as a whole, and mosmess as a whole depends on picolibc as a whole.
+Cross-project dependencies are managed through CMake's standard mechanisms. When building dependencies from source, mosmess uses coarse-grained ordering constraints - picolibc as a whole depends on llvm-mos as a whole, and mosmess as a whole depends on picolibc as a whole.
 
-This approach leverages the fact that each individual project already has correct internal dependency tracking through its native build system. The super-ninja layer only needs to ensure proper ordering between projects, not micromanage internal dependencies within each project. When a source file changes in llvm-mos, ninja rebuilds the affected components within llvm-mos, then cascades to rebuild affected components in picolibc and mosmess.
-
-For users who build dependencies externally, the super-ninja approach becomes irrelevant since the external dependencies don't have accessible build graphs. In such cases, mosmess falls back to traditional CMake dependency management, using imported targets to represent externally-built components.
+This approach leverages the fact that each individual project already has correct internal dependency tracking through its native build system. For users who build dependencies externally, mosmess uses imported targets to represent externally-built components.
 
 ## User Experience Design
 
@@ -164,4 +156,3 @@ The platform inheritance system is designed for minimal overhead. Since it lever
 
 The vector multiplication approach does increase the number of build targets, which can impact build system generation time for projects with many platform and vector combinations. However, the impact is linear in the number of combinations, and CMake handles large numbers of targets efficiently. More importantly, the generated targets can build in parallel, so total build time often decreases despite the larger number of targets.
 
-The super-ninja integration provides the best incremental build performance by allowing ninja to see the complete dependency graph across all projects. This enables optimal build scheduling and minimal rebuilds when source files change. However, this mode requires all projects to be co-located and built from source, limiting its applicability to development scenarios.

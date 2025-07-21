@@ -28,7 +28,7 @@ The vector system's power comes from its simplicity. By treating build variation
 
 The relationship between mosmess and its external dependencies (llvm-mos and picolibc) represents a sophisticated approach to multi-build-system integration. You must understand that different users have different preferences for dependency management, and the system should accommodate all reasonable approaches rather than forcing a single solution.
 
-The external dependency mode recognizes that many users prefer to manage toolchain dependencies through system package managers or manual installation. The integrated dependency mode serves users who want a completely self-contained build experience. The super-ninja mode provides optimal incremental build performance for active SDK development.
+The external dependency mode recognizes that many users prefer to manage toolchain dependencies through system package managers or manual installation. The integrated dependency mode serves users who want a completely self-contained build experience.
 
 Each mode has different trade-offs in terms of build reproducibility, system requirements, and development workflow. You should not advocate for one approach over others but rather ensure that all modes are well-supported and properly documented.
 
@@ -44,54 +44,33 @@ When debugging property propagation issues, remember that CMake provides excelle
 
 ### Build System Integration Strategies
 
-The super-ninja approach represents the most technically sophisticated aspect of mosmess. You must understand that ninja's subninja mechanism allows multiple build graphs to be combined into a unified dependency system. This is not merely a convenience feature but a fundamental capability that enables optimal incremental builds across multiple projects.
-
-**CRITICAL UNDERSTANDING: All build dependencies must be expressed at configure time, not build time.** This is the fundamental principle that makes mosmess reliable and scalable. Procedural builds where you "build X then Y" are fragile and don't scale. Instead, the complete dependency graph must be available when CMake runs.
+Build dependencies should be managed through CMake's native dependency mechanisms. Procedural builds where you "build X then Y" are fragile and don't scale.
 
 #### Configure-Time Dependency Expression
 
-For superninja builds, at CMake configure time we must:
+At CMake configure time we must:
 
 1. **Configure all dependencies first**:
-   - Run CMake to configure llvm-mos (generates `build/dependencies/llvm-mos/build.ninja`)
-   - Run Meson to configure picolibc (generates `build/dependencies/picolibc/build.ninja`)
-   - These ninja files now exist and can be referenced
+   - Run CMake to configure llvm-mos
+   - Run Meson to configure picolibc
+   - Handle dependencies between projects
 
-2. **Generate the master ninja file**:
-   - Create a master `build/superninja/build.ninja` that includes:
-     ```ninja
-     subninja ../dependencies/llvm-mos/build.ninja
-     subninja ../dependencies/picolibc/build.ninja
-     subninja ../mosmess.ninja
-     ```
-   - Express high-level dependencies between projects:
-     ```ninja
-     build picolibc-configure: phony llvm-mos-install
-     ```
-
-3. **Make dependencies visible**: The master ninja file gives complete visibility into all dependencies across all projects. We can depend on specific targets like "llvm-mos-install" from our build.
-
-This approach means that when the user runs `ninja -C build/superninja`, ninja has complete knowledge of every dependency across all three projects and can optimally schedule builds.
+2. **Make dependencies visible**: Express high-level dependencies between projects during the configure phase.
 
 #### CMake-Only Builds
 
-When not using superninja, we lose fine-grained visibility:
 - FetchContent must handle both llvm-mos (CMake-based) and picolibc (Meson-based)
 - CMake cannot see inside Meson's build graph
 - Dependencies are coarser and builds less optimal
-- Still functional but not as efficient as superninja
+- Still functional
 
-The key insight is that ninja operates at a lower level than individual build system generators. While CMake, Meson, and other tools generate ninja files, ninja itself is responsible for executing the actual build commands. By combining ninja files from multiple sources at configure time, you create a build system with complete dependency visibility.
-
-However, this approach only works when all dependencies are built from source in a controlled layout. When users provide external dependencies, the super-ninja approach becomes inapplicable, and you must fall back to traditional CMake dependency management. The system should detect which mode is appropriate and adapt accordingly.
+The key insight is that different build systems have different capabilities and constraints. CMake and Meson each generate their own build files, and integrating them requires careful consideration of dependency boundaries.
 
 ### Cross-Project Dependency Management
 
-When implementing cross-project dependencies in the super-ninja mode, resist the urge to enumerate fine-grained dependencies between individual files or targets. The complexity of such an approach would quickly become unmaintainable as projects evolve.
+When implementing cross-project dependencies, resist the urge to enumerate fine-grained dependencies between individual files or targets. The complexity of such an approach would quickly become unmaintainable as projects evolve.
 
-Instead, focus on coarse-grained ordering constraints between entire projects. The master ninja file should declare that picolibc as a whole depends on llvm-mos as a whole, and mosmess as a whole depends on picolibc as a whole. Each individual project maintains correct internal dependencies through its native build system.
-
-This approach leverages the fact that build systems are already optimized for dependency tracking within their domains. The super-ninja layer only needs to coordinate between domains, not micromanage within them.
+Instead, focus on coarse-grained ordering constraints between entire projects. Each individual project maintains correct internal dependencies through its native build system.
 
 ## User Experience Considerations
 
@@ -119,7 +98,6 @@ When users request features that seem to require significant new infrastructure,
 
 Be extremely careful about respecting build system boundaries. CMake should not try to directly manage Meson builds, ninja should not attempt to parse CMake files, and so on. Each build system should operate within its domain and coordinate with others through well-defined interfaces.
 
-The super-ninja approach works because it operates at ninja's level, below the individual build system generators. It does not attempt to make one build system understand another's internals.
 
 ### Property Propagation Assumptions
 
@@ -131,7 +109,7 @@ Remember that different types of properties propagate differently. Include direc
 
 ### Incremental Development Strategy
 
-mosmess should be developed incrementally, starting with basic platform support and gradually adding more sophisticated features. Begin with simple INTERFACE library platforms, add inheritance support, then introduce vector multiplication. The super-ninja integration should be developed last, as it depends on having a working CMake-based system first.
+mosmess should be developed incrementally, starting with basic platform support and gradually adding more sophisticated features. Begin with simple INTERFACE library platforms, add inheritance support, then introduce vector multiplication.
 
 Each development increment should be fully functional and testable. Users should be able to adopt mosmess with basic features and upgrade to more advanced capabilities as needed.
 
@@ -139,7 +117,7 @@ Each development increment should be fully functional and testable. Users should
 
 Testing mosmess requires attention to both functional correctness and performance characteristics. Functional tests should verify that platform inheritance works correctly, vector multiplication generates appropriate targets, and dependency integration modes behave properly.
 
-Performance testing should focus on build system generation time and incremental build behavior. The system should scale well with increasing numbers of platforms and vectors, and the super-ninja mode should provide measurable improvements for incremental builds.
+Performance testing should focus on build system generation time and incremental build behavior. The system should scale well with increasing numbers of platforms and vectors.
 
 ### Community and Ecosystem Development
 
@@ -159,4 +137,4 @@ Monitor developments in the broader embedded development community for concepts 
 
 Be prepared for the possibility that underlying technologies may change over time. CMake itself evolves, ninja may be superseded by other build execution engines, and new build systems may emerge. The architecture should be designed to accommodate such changes without requiring complete rewrites.
 
-The key is maintaining clear separation of concerns between the conceptual model (platforms, vectors, inheritance) and the implementation mechanisms (INTERFACE libraries, target multiplication, subninja). As long as the conceptual model remains stable, implementation details can evolve as needed.
+The key is maintaining clear separation of concerns between the conceptual model (platforms, vectors, inheritance) and the implementation mechanisms (INTERFACE libraries, target multiplication). As long as the conceptual model remains stable, implementation details can evolve as needed.
