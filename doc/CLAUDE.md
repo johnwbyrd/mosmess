@@ -159,3 +159,7 @@ This project values careful planning, objective analysis, and precise technical 
 **Write in prose paragraphs for complex topics.** Bullet points fragment information and make relationships unclear. Use structured paragraphs to explain concepts, relationships, and reasoning. Reserve bullet points for simple lists of items or tasks.
 
 **No emojis.** Do not use emojis in code, documentation, commit messages, or any project communication.  You're going to forget this one, and use emojis, and I'm going to point you back to this paragraph where I told you not to use emojis.
+
+## Immediate Next Steps
+
+IMMEDIATELY READ EVERY SINGLE .MD FILE IN THE PROJECT, COMPLETELY.  You will be checked on your knowledge of the contents on these files.  If you are not able to answer questions about the contents of these files, your instance will be deleted and you will be replaced with another instance that actually reads these files.

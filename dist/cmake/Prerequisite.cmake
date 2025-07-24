@@ -204,11 +204,9 @@ Functions
 
   **Control Options:**
 
-  ``BUILD_ALWAYS``
-    Always rebuild regardless of stamps
-
-  ``<STEP>_ALWAYS``
-    Always run specific step (e.g., ``CONFIGURE_ALWAYS``)
+  ``<STEP>_ALWAYS <bool>``
+    Whether to always run specific step (e.g., ``CONFIGURE_ALWAYS``).  A true
+    value forces the step to run every time, regardless of file dependencies.
 
 .. command:: Prerequisite_Add_Step
 
@@ -269,9 +267,144 @@ Functions
 
 # Implementation
 
+# Internal step list - defines the order and names of all prerequisite steps
+set(_PREREQUISITE_STEPS DOWNLOAD UPDATE CONFIGURE BUILD INSTALL TEST)
+
+# Map each step to a new string by applying prefix and suffix
+# Transforms each step in _PREREQUISITE_STEPS using the pattern: prefix + step + suffix
+# Example: _Prerequisite_Map_Steps("LOG_" "" result) -> LOG_DOWNLOAD, LOG_UPDATE, etc.
+# Example: _Prerequisite_Map_Steps("" "_COMMAND" result) -> DOWNLOAD_COMMAND, UPDATE_COMMAND, etc.
+function(_Prerequisite_Map_Steps prefix suffix out_var)
+  set(result "")
+  foreach(step ${_PREREQUISITE_STEPS})
+    list(APPEND result "${prefix}${step}${suffix}")
+  endforeach()
+  set(${out_var} ${result} PARENT_SCOPE)
+endfunction()
+
+# Check if we're running at configure time (before project())
+# Returns TRUE if CMAKE_PROJECT_NAME is not defined (configure time)
+# Returns FALSE if CMAKE_PROJECT_NAME is defined (build time)
+function(_Prerequisite_Is_Configure_Time out_var)
+  if(NOT DEFINED CMAKE_PROJECT_NAME)
+    set(${out_var} TRUE PARENT_SCOPE)
+  else()
+    set(${out_var} FALSE PARENT_SCOPE)
+  endif()
+endfunction()
+
+# Parse all arguments using cmake_parse_arguments
+# - Extract options like IMMEDIATE, BUILD_ALWAYS
+# - Extract single-value args like PREFIX, SOURCE_DIR, etc.
+# - Extract multi-value args like DEPENDS, COMMANDS, and all step-specific options
+# - Store all parsed arguments as global properties using pattern:
+#   _PREREQUISITE_${name}_${property_name}
+# - This allows other helper functions to retrieve arguments using
+#   get_property(GLOBAL) without needing PARENT_SCOPE variable passing
+# - Follows the same approach as ExternalProject and FetchContent
+function(_Prerequisite_Parse_Arguments name)
+  # Generate step-specific argument names
+  _Prerequisite_Map_Steps("" "_ALWAYS" step_always_opts)
+  _Prerequisite_Map_Steps("LOG_" "" step_log_opts)
+  _Prerequisite_Map_Steps("" "_COMMAND" step_command_opts)
+  _Prerequisite_Map_Steps("" "_DEPENDS" step_depends_opts)
+  
+  # Set up argument categories for cmake_parse_arguments
+  set(options 
+    GIT_SHALLOW DOWNLOAD_NO_EXTRACT UPDATE_DISCONNECTED BUILD_IN_SOURCE
+  )
+  
+  set(oneValueArgs
+    PREFIX SOURCE_DIR BINARY_DIR INSTALL_DIR STAMP_DIR LOG_DIR
+    GIT_REPOSITORY GIT_TAG URL URL_HASH LOG_OUTPUT_ON_FAILURE
+    ${step_log_opts}
+    ${step_always_opts}
+  )
+  
+  set(multiValueArgs
+    DEPENDS
+    ${step_command_opts}
+    ${step_depends_opts}
+  )
+  
+  # Parse arguments starting from index 1 (skip the name parameter)
+  cmake_parse_arguments(PARSE_ARGV 1 PA "${options}" "${oneValueArgs}" "${multiValueArgs}")
+  
+  # Store each parsed argument as a global property
+  foreach(option ${options})
+    if(PA_${option})
+      set_property(GLOBAL PROPERTY _PREREQUISITE_${name}_${option} TRUE)
+    endif()
+  endforeach()
+  
+  foreach(arg ${oneValueArgs})
+    if(DEFINED PA_${arg})
+      set_property(GLOBAL PROPERTY _PREREQUISITE_${name}_${arg} "${PA_${arg}}")
+    endif()
+  endforeach()
+  
+  foreach(arg ${multiValueArgs})
+    if(DEFINED PA_${arg})
+      set_property(GLOBAL PROPERTY _PREREQUISITE_${name}_${arg} "${PA_${arg}}")
+    endif()
+  endforeach()
+  
+  # Validate argument combinations
+  get_property(has_git GLOBAL PROPERTY _PREREQUISITE_${name}_GIT_REPOSITORY SET)
+  get_property(has_url GLOBAL PROPERTY _PREREQUISITE_${name}_URL SET)
+  if(has_git AND has_url)
+    message(FATAL_ERROR "Prerequisite ${name}: GIT_REPOSITORY and URL are mutually exclusive")
+  endif()
+endfunction()
+
+# Set up default directory structure if not explicitly provided
+# - Default PREFIX based on name
+# - Default SOURCE_DIR, BINARY_DIR, STAMP_DIR, etc. based on PREFIX
+function(_Prerequisite_Setup_Directories name)
+endfunction()
+
+# Store all prerequisite properties for later retrieval
+# - Use CMake properties to store parsed arguments
+# - This allows Prerequisite_Get_Property to work
+function(_Prerequisite_Store_Properties name)
+endfunction()
+
+# Parse and organize step commands
+# - Extract commands from COMMANDS list or from step-specific *_COMMAND options
+# - Store organized commands by step for later processing
+function(_Prerequisite_Parse_Step_Commands name)
+endfunction()
+
+# Process each step in order (DOWNLOAD, UPDATE, CONFIGURE, BUILD, INSTALL, TEST)
+# - For each step:
+#   - Determine if step uses file dependencies (has *_DEPENDS) or stamps
+#   - If IMMEDIATE and before project():
+#     - Check if step needs to run (based on stamps or file dependencies)
+#     - Execute step using execute_process if needed
+#     - Update tracking (create stamp or record file state)
+#   - Always create build-time targets:
+#     - Create add_custom_command with appropriate dependencies
+#     - Handle previous step dependencies (chain steps together)
+#     - Handle DEPENDS prerequisites (make targets depend on other prerequisites)
+#     - Create named target like <name>-<step>
+#     - Create force target like <name>-force-<step>
+function(_Prerequisite_Process_Steps name)
+endfunction()
+
+# Set up any final properties or variables needed
+function(_Prerequisite_Finalize name)
+endfunction()
+
 function(Prerequisite_Add name)
+  _Prerequisite_Is_Configure_Time(is_configure_time)
+  _Prerequisite_Parse_Arguments(${name} ${ARGN})
+  _Prerequisite_Setup_Directories(${name})
+  _Prerequisite_Store_Properties(${name})
+  _Prerequisite_Parse_Step_Commands(${name})
+  _Prerequisite_Process_Steps(${name})
+  _Prerequisite_Finalize(${name})
+  
   message(STATUS "Prerequisite_Add(${name}) - stub implementation")
-  # TODO: Implement prerequisite creation and dual execution model
 endfunction()
 
 function(Prerequisite_Add_Step name step)
@@ -280,9 +413,13 @@ function(Prerequisite_Add_Step name step)
 endfunction()
 
 function(Prerequisite_Get_Property name property output_variable)
-  message(STATUS "Prerequisite_Get_Property(${name} ${property}) - stub implementation")
-  # TODO: Implement property retrieval
-  set(${output_variable} "" PARENT_SCOPE)
+  # Retrieve properties from a prerequisite
+  # - Uses global properties stored with pattern _PREREQUISITE_${name}_${property_name}
+  # - This matches the storage approach used by _Prerequisite_Parse_Arguments
+  # - Follows the same design as ExternalProject_Get_Property and FetchContent
+  # - All options from Prerequisite_Add can be retrieved this way
+  get_property(value GLOBAL PROPERTY _PREREQUISITE_${name}_${property})
+  set(${output_variable} "${value}" PARENT_SCOPE)
 endfunction()
 
 function(Prerequisite_Force_Step name step)

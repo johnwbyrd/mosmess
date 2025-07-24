@@ -329,6 +329,11 @@ Prerequisite_Get_Property(<name> <property> <output_variable>)
 **Properties:**
 All options from `Prerequisite_Add` can be retrieved as properties.
 
+**Internal Storage:**
+The prerequisites system stores all parsed arguments as CMake global properties using the naming pattern `_PREREQUISITE_${name}_${property_name}`. This approach, similar to ExternalProject and FetchContent, allows prerequisite data to persist across function calls and be accessible to any part of the build system without relying on variable scope limitations.
+
+When `Prerequisite_Add()` processes arguments, it immediately stores them as global properties. Later, `Prerequisite_Get_Property()` retrieves these stored values using `get_property(GLOBAL)`. This design enables the prerequisites system's internal helper functions to access parsed data without complex variable passing schemes, and provides a clean public API for users who need to query prerequisite configuration.
+
 ### Prerequisite_Force_Step
 
 Force execution of a step and all subsequent steps.
