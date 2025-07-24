@@ -21,6 +21,15 @@ message(STATUS "Retrieved BUILD_COMMAND: ${build_cmd}")
 Prerequisite_Get_Property(hello_immediate DOWNLOAD_COMMAND download_cmd)
 message(STATUS "Retrieved DOWNLOAD_COMMAND: ${download_cmd}")
 
+Prerequisite_Get_Property(hello_immediate PREFIX prefix_dir)
+message(STATUS "Retrieved PREFIX: ${prefix_dir}")
+
+Prerequisite_Get_Property(hello_immediate SOURCE_DIR source_dir)
+message(STATUS "Retrieved SOURCE_DIR: ${source_dir}")
+
+# Debug dump of all properties for hello_immediate
+_Prerequisite_Debug_Dump(hello_immediate)
+
 # Verify the prerequisite ran by checking for expected output
 # Since we can't easily capture echo output during configure time,
 # we'll enhance this test later to write to files we can check

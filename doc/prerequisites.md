@@ -26,15 +26,15 @@ This dual approach means you write your prerequisite once and it works for both 
 
 The prerequisites system needs to know when to rebuild things. It offers two ways to track this: simple stamp files or detailed file dependencies.
 
-By default, the system uses stamp files -- just empty files that mark when a step completed successfully. If the stamp exists, the step is done. If it's missing, the step runs. This is fast and simple, but it's all-or-nothing. The downside is changes to your prerequisite's source files are not automatically detected, and your prerequisite is not automatically rebuilt.
+By default, the system uses stamp files -- just empty files that mark when a step completed successfully. If the stamp exists, the step is done. If it's missing, the step runs. This is fast and simple, but it's all-or-nothing. The downside is changes to your prerequisite's source files are not automatically detected, and your prerequisite is not automatically rebuilt.  
 
 The alternative is file dependency tracking. You tell each step which files it actually depends on, by using CMake's file glob patterns. Before running a step, the system checks if any of those files are newer than the stamp. Changed a source file? Only the build step reruns. Changed CMakeLists.txt? Now configure needs to run too. It's smarter and saves time, especially with large projects.
 
 The catch is that file tracking requires more setup and more build-time overhead. You need to know which files matter for each step, write the glob patterns correctly, and accept that checking hundreds of file timestamps in your prerequisite, takes some incremental amount of time.
 
-Most projects mix both approaches by choosing the appropriate method for each step. Use stamps for stable steps (download, configure) and use file tracking for steps where you need automatic rebuilds (build, install). A typical setup might use file dependency tracking for the build step but use simple stamps for everything else. This gets you fast rebuilds during development without overcomplicating the whole system.
+Most projects mix both approaches by choosing the appropriate method for each step. Use stamps for stable steps (download, configure) and use dependency tracking for steps where you need automatic rebuilds (build, install). A typical setup might use file dependency tracking for the build step but use simple stamps for everything else. This gets you fast rebuilds during development without overcomplicating the whole system.
 
-Each step uses either stamp tracking or file dependency tracking -- never both simultaneously. The choice determines how that step decides when it needs to run.
+Each step uses either mere stamp tracking or additional file dependency tracking. The choice determines how that step decides when it needs to run.
 
 ### Step-based architecture
 
@@ -82,17 +82,13 @@ You can override any of these locations. Maybe you have source code already chec
 
 The PREFIX approach also makes it easy to share installations. Multiple prerequisites can install into the same PREFIX, creating a unified location for all your bootstrapped tools. This is especially handy when building a complete toolchain where later prerequisites need to find earlier ones.
 
-### Stamp file mechanics
+### Stamp files vs dependency tracking
 
-Stamp files are the default way the system tracks which steps have completed successfully. Like ExternalProject, the prerequisites system creates simple timestamp files to remember what's been done.
-
-When a step finishes successfully, the system creates an empty file in the stamp directory. For a prerequisite named `myprereq`, you'd see files like `myprereq-download`, `myprereq-configure`, `myprereq-build`, etc. These aren't complex databases or logs -- just empty marker files whose timestamps matter.
-
-Before running any step, the system checks for its stamp file. If it exists, the step is considered done and gets skipped. If it's missing, the step runs. This simple logic is fast and reliable, but it's all-or-nothing -- the system can't tell what changed, only whether the step completed.
+When a step finishes successfully, the system creates an empty file in the stamp directory. For a prerequisite named `myprereq`, you'd see files like `myprereq-download`, `myprereq-configure`, `myprereq-build`, etc. These aren't complex databases or logs -- just empty marker files whose timestamps indicate the completion of a step.  A target 
 
 When a step fails, the system cleans up by removing stamps for that step and all subsequent steps. This prevents inconsistent states where you might have a build stamp but no install stamp because the build actually failed. It's better to rebuild too much than to have a half-working prerequisite.
 
-File dependency tracking replaces stamp files entirely for that step. When you add file dependencies to a step, that step no longer creates or uses stamp files. Instead, the system uses CMake's normal file dependency logic -- the step runs when any tracked files are newer than the step's outputs, or when outputs are missing. This gives you precise rebuilds based on what actually changed.
+File dependency tracking replaces stamp files entirely for that step. When you add file dependencies to a step, that step no longer creates or uses stamp files. Instead, the system uses CMake's normal file dependency logic -- the step runs when any tracked files are newer than the step's actual outputs, or when outputs are missing. This gives you precise rebuilds based on what actually changed.
 
 Steps using stamp tracking can be manually controlled by deleting stamp files to force rebuilds. Want to reconfigure a stamp-tracked step? Delete `myprereq-configure` and all later stamps. Steps using file dependencies are controlled by CMake's normal dependency system -- they run automatically when their inputs change.
 
@@ -100,9 +96,7 @@ Steps using stamp tracking can be manually controlled by deleting stamp files to
 
 The prerequisites system creates standard CMake targets for every prerequisite, giving you normal CMake integration alongside the bootstrap capability.
 
-For each step in your prerequisite, the system generates an `add_custom_command()` rule. For steps using stamp tracking, the command's output is the step's stamp file, and it depends on the previous step's output. For steps using file dependency tracking, the command depends on the tracked files and produces no stamp file -- CMake's dependency logic handles file timestamps directly. When make or ninja sees that outputs are missing or dependencies are newer, it runs the associated command.
-
-The system also creates convenient targets for each step using `add_custom_target()`. A prerequisite named `myprereq` gets targets like `myprereq-download`, `myprereq-build`, `myprereq-install`, etc. These targets depend on whatever output their step produces -- stamp files for stamp-tracked steps, or the actual command execution for file-tracked steps.
+For each step in your prerequisite, the system generates a `myprereq-step` target.  A prerequisite named `myprereq` gets targets like `myprereq-download`, `myprereq-build`, `myprereq-install`, etc. These targets depend on whatever output their step produces -- stamp files for stamp-tracked steps, or the actual command execution for file-tracked steps.
 
 Additionally, the system creates "force" targets that bypass dependency checking entirely. These targets have names like `myprereq-force-download`, `myprereq-force-configure`, `myprereq-force-build`, etc. When invoked, a force target deletes the stamp file for that step and all subsequent steps, then runs those steps regardless of timestamps. This is useful for debugging, testing changes, or recovering from build issues.
 
@@ -110,7 +104,7 @@ Example: `make myprereq-force-build` will delete build/install/test stamps and r
 
 The beauty of this approach is that these are just normal CMake targets. You can use them with `add_dependencies()` to make your main project depend on prerequisite steps. You can invoke them manually from the command line. They participate in parallel builds and respect CMake's dependency tracking.
 
-Most importantly, these targets run the exact same commands as immediate execution. Whether a step runs during configuration via `execute_process()` or during build via these targets, the commands, arguments, and environment are identical. This consistency means prerequisites behave the same way regardless of when they execute.
+Most importantly, these targets run the exact same commands as immediate execution. Whether a step runs during configuration or during build via these targets, the commands, arguments, and environment are identical. This consistency means prerequisites behave the same way regardless of when they execute.
 
 ## Usage patterns
 

@@ -270,6 +270,9 @@ Functions
 # Internal step list - defines the order and names of all prerequisite steps
 set(_PREREQUISITE_STEPS DOWNLOAD UPDATE CONFIGURE BUILD INSTALL TEST)
 
+# Internal substitution variables - defines all @PREREQUISITE_*@ variable names
+set(_PREREQUISITE_SUBSTITUTION_VARS NAME PREFIX SOURCE_DIR BINARY_DIR INSTALL_DIR STAMP_DIR LOG_DIR)
+
 # Map each step to a new string by applying prefix and suffix
 # Transforms each step in _PREREQUISITE_STEPS using the pattern: prefix + step + suffix
 # Example: _Prerequisite_Map_Steps("LOG_" "" result) -> LOG_DOWNLOAD, LOG_UPDATE, etc.
@@ -280,6 +283,45 @@ function(_Prerequisite_Map_Steps prefix suffix out_var)
     list(APPEND result "${prefix}${step}${suffix}")
   endforeach()
   set(${out_var} ${result} PARENT_SCOPE)
+endfunction()
+
+# Debug function to dump all prerequisite properties for a given name
+# WARNING: This function is for debugging purposes only
+# Since CMake doesn't provide a way to enumerate custom global properties,
+# this function checks all known prerequisite property names
+function(_Prerequisite_Debug_Dump name)
+  message(STATUS "=== Prerequisite Properties for ${name} ===")
+  
+  # Generate lists of all possible property names
+  _Prerequisite_Map_Steps("" "_ALWAYS" step_always_opts)
+  _Prerequisite_Map_Steps("LOG_" "" step_log_opts)
+  _Prerequisite_Map_Steps("" "_COMMAND" step_command_opts)
+  _Prerequisite_Map_Steps("" "_DEPENDS" step_depends_opts)
+  
+  # All possible property names
+  set(all_properties
+    # Directory properties
+    PREFIX SOURCE_DIR BINARY_DIR INSTALL_DIR STAMP_DIR LOG_DIR
+    # Git/URL properties  
+    GIT_REPOSITORY GIT_TAG URL URL_HASH
+    # Boolean flags
+    GIT_SHALLOW DOWNLOAD_NO_EXTRACT UPDATE_DISCONNECTED BUILD_IN_SOURCE
+    # Other options
+    LOG_OUTPUT_ON_FAILURE DEPENDS
+    # Generated step-specific properties
+    ${step_always_opts} ${step_log_opts} ${step_command_opts} ${step_depends_opts}
+  )
+  
+  # Check each property and display if set
+  foreach(prop ${all_properties})
+    get_property(value GLOBAL PROPERTY _PREREQUISITE_${name}_${prop})
+    get_property(is_set GLOBAL PROPERTY _PREREQUISITE_${name}_${prop} SET)
+    if(is_set)
+      message(STATUS "  ${prop} = ${value}")
+    endif()
+  endforeach()
+  
+  message(STATUS "=== End Properties for ${name} ===")
 endfunction()
 
 # Check if we're running at configure time (before project())
@@ -361,34 +403,193 @@ endfunction()
 # - Default PREFIX based on name
 # - Default SOURCE_DIR, BINARY_DIR, STAMP_DIR, etc. based on PREFIX
 function(_Prerequisite_Setup_Directories name)
+  # Set up directory defaults - skip NAME since it's not a directory
+  set(directory_vars PREFIX SOURCE_DIR BINARY_DIR INSTALL_DIR STAMP_DIR LOG_DIR)
+  
+  # First pass: compute defaults
+  foreach(var ${directory_vars})
+    get_property(user_value GLOBAL PROPERTY _PREREQUISITE_${name}_${var})
+    
+    if(user_value)
+      set(${var} "${user_value}")
+    else()
+      # Compute defaults based on variable type
+      if(var STREQUAL "PREFIX")
+        set(${var} "${CMAKE_CURRENT_BINARY_DIR}/${name}-prefix")
+      elseif(var STREQUAL "SOURCE_DIR")
+        set(${var} "${PREFIX}/src/${name}")
+      elseif(var STREQUAL "BINARY_DIR")
+        set(${var} "${PREFIX}/src/${name}-build")
+      elseif(var STREQUAL "INSTALL_DIR")
+        set(${var} "${PREFIX}")
+      elseif(var STREQUAL "STAMP_DIR")
+        set(${var} "${PREFIX}/src/${name}-stamp")
+      elseif(var STREQUAL "LOG_DIR")
+        set(${var} "${STAMP_DIR}")
+      endif()
+    endif()
+  endforeach()
+  
+  # Second pass: store final values and create directories
+  foreach(var ${directory_vars})
+    set_property(GLOBAL PROPERTY _PREREQUISITE_${name}_${var} "${${var}}")
+    file(MAKE_DIRECTORY "${${var}}")
+  endforeach()
 endfunction()
 
-# Store all prerequisite properties for later retrieval
-# - Use CMake properties to store parsed arguments
-# - This allows Prerequisite_Get_Property to work
-function(_Prerequisite_Store_Properties name)
-endfunction()
-
-# Parse and organize step commands
-# - Extract commands from COMMANDS list or from step-specific *_COMMAND options
-# - Store organized commands by step for later processing
-function(_Prerequisite_Parse_Step_Commands name)
-endfunction()
 
 # Process each step in order (DOWNLOAD, UPDATE, CONFIGURE, BUILD, INSTALL, TEST)
-# - For each step:
-#   - Determine if step uses file dependencies (has *_DEPENDS) or stamps
-#   - If IMMEDIATE and before project():
-#     - Check if step needs to run (based on stamps or file dependencies)
-#     - Execute step using execute_process if needed
-#     - Update tracking (create stamp or record file state)
-#   - Always create build-time targets:
-#     - Create add_custom_command with appropriate dependencies
-#     - Handle previous step dependencies (chain steps together)
-#     - Handle DEPENDS prerequisites (make targets depend on other prerequisites)
-#     - Create named target like <name>-<step>
-#     - Create force target like <name>-force-<step>
 function(_Prerequisite_Process_Steps name)
+  # Retrieve configure-time flag and necessary properties
+  get_property(is_configure_time GLOBAL PROPERTY _PREREQUISITE_${name}_IS_CONFIGURE_TIME)
+  get_property(prerequisite_depends GLOBAL PROPERTY _PREREQUISITE_${name}_DEPENDS)
+  
+  # Get properties for variable substitution
+  foreach(var ${_PREREQUISITE_SUBSTITUTION_VARS})
+    if(var STREQUAL "NAME")
+      set(${var} "${name}")
+    else()
+      get_property(${var} GLOBAL PROPERTY _PREREQUISITE_${name}_${var})
+    endif()
+  endforeach()
+  
+  set(previous_stamp_file "")
+  
+  # Process each step in order
+  foreach(step ${_PREREQUISITE_STEPS})
+    # Step 1: Check if this step has commands defined
+    get_property(step_command GLOBAL PROPERTY _PREREQUISITE_${name}_${step}_COMMAND)
+    if(NOT step_command)
+      continue()
+    endif()
+    
+    # Set up paths for this step
+    set(stamp_file "${STAMP_DIR}/${name}-${step}")
+    
+    # Step 3: Immediate execution if at configure time
+    if(is_configure_time)
+      set(needs_to_run FALSE)
+      
+      if(uses_file_deps)
+        # TODO: Compare file timestamps - for now, always run
+        set(needs_to_run TRUE)
+      else()
+        # Check if stamp file exists
+        if(NOT EXISTS "${stamp_file}")
+          set(needs_to_run TRUE)
+        endif()
+      endif()
+      
+      if(needs_to_run)
+        # Perform variable substitution
+        set(substituted_command "")
+        foreach(cmd_part ${step_command})
+          foreach(var ${_PREREQUISITE_SUBSTITUTION_VARS})
+            string(REPLACE "@PREREQUISITE_${var}@" "${${var}}" cmd_part "${cmd_part}")
+          endforeach()
+          list(APPEND substituted_command "${cmd_part}")
+        endforeach()
+        
+        message(STATUS "Prerequisite ${name}: Running ${step} step immediately")
+        execute_process(
+          COMMAND ${substituted_command}
+          WORKING_DIRECTORY "${binary_dir}"
+          RESULT_VARIABLE result
+        )
+        
+        if(NOT result EQUAL 0)
+          # Clean up stamps for this and subsequent steps
+          foreach(cleanup_step ${_PREREQUISITE_STEPS})
+            file(REMOVE "${stamp_dir}/${name}-${cleanup_step}")
+            if(cleanup_step STREQUAL step)
+              break()
+            endif()
+          endforeach()
+          message(FATAL_ERROR "Prerequisite ${name}: ${step} step failed")
+        endif()
+        
+        # Create stamp file
+        file(TOUCH "${stamp_file}")
+      endif()
+    endif()
+    
+    # Step 4: Create build-time targets
+    string(TOLOWER "${step}" step_lower)
+    
+    if(uses_file_deps)
+      # File dependency tracking - no stamp files
+      set(step_deps "")
+      if(previous_stamp_file)
+        list(APPEND step_deps "${previous_stamp_file}")
+      endif()
+      # TODO: Process file dependency patterns properly
+      list(APPEND step_deps ${step_depends})
+      
+      # Create custom target that runs the command directly
+      add_custom_target(${name}-${step_lower}
+        COMMAND ${step_command}
+        DEPENDS ${step_deps}
+        WORKING_DIRECTORY "${binary_dir}"
+        COMMENT "Prerequisite ${name}: Running ${step} step"
+      )
+      
+      # No stamp file is created or used for this step
+      set(previous_stamp_file "")
+    else()
+      # Stamp-based tracking
+      set(step_deps "")
+      if(previous_stamp_file)
+        list(APPEND step_deps "${previous_stamp_file}")
+      endif()
+      
+      # Create the custom command that produces a stamp file
+      add_custom_command(
+        OUTPUT "${stamp_file}"
+        COMMAND ${step_command}
+        COMMAND ${CMAKE_COMMAND} -E touch "${stamp_file}"
+        DEPENDS ${step_deps}
+        WORKING_DIRECTORY "${binary_dir}"
+        COMMENT "Prerequisite ${name}: Running ${step} step"
+      )
+      
+      # Create named target that depends on the stamp file
+      add_custom_target(${name}-${step_lower}
+        DEPENDS "${stamp_file}"
+      )
+      
+      # Update previous stamp for next iteration
+      set(previous_stamp_file "${stamp_file}")
+    endif()
+    
+    # Create force target
+    if(uses_file_deps)
+      # For file dependency tracking, force target just runs the step
+      add_custom_target(${name}-force-${step_lower}
+        COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target ${name}-${step_lower}
+        COMMENT "Prerequisite ${name}: Force ${step} step"
+      )
+    else()
+      # For stamp tracking, force target removes stamp then runs
+      add_custom_target(${name}-force-${step_lower}
+        COMMAND ${CMAKE_COMMAND} -E remove "${stamp_file}"
+        COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target ${name}-${step_lower}
+        COMMENT "Prerequisite ${name}: Force ${step} step"
+      )
+    endif()
+  endforeach()
+  
+  # Handle prerequisite-level dependencies
+  if(prerequisite_depends)
+    foreach(dep_prereq ${prerequisite_depends})
+      foreach(step ${_PREREQUISITE_STEPS})
+        get_property(step_command GLOBAL PROPERTY _PREREQUISITE_${name}_${step}_COMMAND)
+        if(step_command)
+          string(TOLOWER "${step}" step_lower)
+          add_dependencies(${name}-${step_lower} ${dep_prereq}-${step_lower})
+        endif()
+      endforeach()
+    endforeach()
+  endif()
 endfunction()
 
 # Set up any final properties or variables needed
@@ -397,10 +598,9 @@ endfunction()
 
 function(Prerequisite_Add name)
   _Prerequisite_Is_Configure_Time(is_configure_time)
+  set_property(GLOBAL PROPERTY _PREREQUISITE_${name}_IS_CONFIGURE_TIME "${is_configure_time}")
   _Prerequisite_Parse_Arguments(${name} ${ARGN})
   _Prerequisite_Setup_Directories(${name})
-  _Prerequisite_Store_Properties(${name})
-  _Prerequisite_Parse_Step_Commands(${name})
   _Prerequisite_Process_Steps(${name})
   _Prerequisite_Finalize(${name})
   

@@ -160,6 +160,38 @@ This project values careful planning, objective analysis, and precise technical 
 
 **No emojis.** Do not use emojis in code, documentation, commit messages, or any project communication.  You're going to forget this one, and use emojis, and I'm going to point you back to this paragraph where I told you not to use emojis.
 
+## Prerequisites System Implementation Status
+
+**CRITICAL: The basic prerequisites system is WORKING as of July 2025.**
+
+### What's Implemented and Working
+- **Core architecture**: Dual execution model (configure-time + build-time) is fully functional
+- **Property storage**: Uses global properties with pattern `_PREREQUISITE_${name}_${property}` (like ExternalProject/FetchContent)
+- **Directory management**: Follows ExternalProject layout, creates all necessary directories
+- **Argument parsing**: All documented options are parsed and stored correctly
+- **Immediate execution**: Commands execute during configure time using `execute_process()`
+- **Build targets**: Creates `<name>-<step>` and `<name>-force-<step>` targets correctly
+- **Step chaining**: Dependencies flow through stamp files between steps
+- **Testing**: Complete test suite in `tests/prerequisite/` with passing tests
+
+### Key Implementation Decisions Made
+1. **Self-referential stamp dependencies**: `add_custom_command()` uses same stamp file for both OUTPUT and DEPENDS
+2. **Global property storage**: Enables cross-function data sharing without PARENT_SCOPE complexity
+3. **Lowercase target naming**: Targets are `hello-build` not `hello-BUILD` for consistency
+4. **Variable lists**: `_PREREQUISITE_STEPS` and `_PREREQUISITE_SUBSTITUTION_VARS` drive loops to reduce duplication
+
+### Critical Remaining Work (HIGH PRIORITY)
+1. **Variable substitution in build commands**: Currently only works for immediate execution, not build-time
+2. **File dependency timestamp checking**: Currently always runs if `*_DEPENDS` present
+3. **Logging support**: `LOG_*` options parsed but ignored
+4. **Validation**: Self-referential stamp pattern needs robustness testing
+
+### Files to Examine First
+- `dist/cmake/Prerequisite.cmake` - Main implementation (functional but incomplete)
+- `tests/prerequisite/` - Working test suite demonstrating functionality  
+- `doc/prerequisites.md` - Complete design specification
+- `doc/todo.md` - Updated status and remaining work
+
 ## Immediate Next Steps
 
 IMMEDIATELY READ EVERY SINGLE .MD FILE IN THE PROJECT, COMPLETELY.  You will be checked on your knowledge of the contents on these files.  If you are not able to answer questions about the contents of these files, your instance will be deleted and you will be replaced with another instance that actually reads these files.
