@@ -295,22 +295,6 @@ Prerequisite_Add(my_project
 - `BUILD_ALWAYS` - Always rebuild regardless of stamps
 - `<STEP>_ALWAYS` - Always run specific step (e.g., `CONFIGURE_ALWAYS`)
 
-### Prerequisite_Add_Step
-
-Add a custom step to a prerequisite.
-
-**Synopsis:**
-```
-Prerequisite_Add_Step(<name> <step> [options...])
-```
-
-**Options:**
-- `COMMAND <cmd...>` - Command to execute
-- `DEPENDEES <steps...>` - Steps this depends on
-- `DEPENDERS <steps...>` - Steps that depend on this
-- `WORKING_DIRECTORY <dir>` - Working directory for command
-- `ALWAYS` - Always run this step
-
 ### Prerequisite_Get_Property
 
 Retrieve properties from a prerequisite.
@@ -328,24 +312,18 @@ The prerequisites system stores all parsed arguments as CMake global properties 
 
 When `Prerequisite_Add()` processes arguments, it immediately stores them as global properties. Later, `Prerequisite_Get_Property()` retrieves these stored values using `get_property(GLOBAL)`. This design enables the prerequisites system's internal helper functions to access parsed data without complex variable passing schemes, and provides a clean public API for users who need to query prerequisite configuration.
 
-### Prerequisite_Force_Step
+### Force Targets
 
-Force execution of a step and all subsequent steps.
+Force targets are automatically created for each step to enable rebuilding when needed.
 
-**Synopsis:**
+**Target Names:**
 ```
-Prerequisite_Force_Step(<name> <step>)
-```
-
-This function is typically called by phony targets to force rebuilds.
-
-### Prerequisite_Step_Current
-
-Check if a step is up-to-date.
-
-**Synopsis:**
-```
-Prerequisite_Step_Current(<name> <step> <output_variable>)
+<name>-force-<step>  # e.g., myprereq-force-build
 ```
 
-Sets output variable to TRUE if step is current, FALSE if it needs to run.
+**Usage:**
+```bash
+cmake --build . --target myprereq-force-build
+```
+
+Force targets remove the step's stamp file and rebuild the step and all subsequent steps. This is useful for troubleshooting or when you want to force a rebuild regardless of dependency timestamps.

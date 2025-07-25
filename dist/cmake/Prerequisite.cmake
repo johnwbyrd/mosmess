@@ -208,31 +208,6 @@ Functions
     Whether to always run specific step (e.g., ``CONFIGURE_ALWAYS``).  A true
     value forces the step to run every time, regardless of file dependencies.
 
-.. command:: Prerequisite_Add_Step
-
-  Add a custom step to a prerequisite.
-
-  .. code-block:: cmake
-
-    Prerequisite_Add_Step(<name> <step> [options...])
-
-  **Options:**
-
-  ``COMMAND <cmd...>``
-    Command to execute
-
-  ``DEPENDEES <steps...>``
-    Steps this depends on
-
-  ``DEPENDERS <steps...>``
-    Steps that depend on this
-
-  ``WORKING_DIRECTORY <dir>``
-    Working directory for command
-
-  ``ALWAYS``
-    Always run this step
-
 .. command:: Prerequisite_Get_Property
 
   Retrieve properties from a prerequisite.
@@ -243,29 +218,23 @@ Functions
 
   **Properties:** All options from ``Prerequisite_Add`` can be retrieved as properties.
 
-.. command:: Prerequisite_Force_Step
+**Force Targets:**
 
-  Force execution of a step and all subsequent steps.
+  Force targets are automatically created for each step as ``<name>-force-<step>`` 
+  (e.g., ``myprereq-force-build``). These targets remove the step's stamp file 
+  and rebuild the step and all subsequent steps.
 
-  .. code-block:: cmake
+  .. code-block:: bash
 
-    Prerequisite_Force_Step(<name> <step>)
-
-  This function is typically called by phony targets to force rebuilds.
-
-.. command:: Prerequisite_Step_Current
-
-  Check if a step is up-to-date.
-
-  .. code-block:: cmake
-
-    Prerequisite_Step_Current(<name> <step> <output_variable>)
-
-  Sets output variable to TRUE if step is current, FALSE if it needs to run.
+    cmake --build . --target myprereq-force-build
 
 #]=======================================================================]
 
 # Implementation
+
+# Internal prefix for all global properties and internal variables
+# Can be changed in one place to avoid namespace collisions
+set(_PREREQUISITE_PREFIX "_PREREQUISITE")
 
 # Internal step list - defines the order and names of all prerequisite steps
 set(_PREREQUISITE_STEPS DOWNLOAD UPDATE CONFIGURE BUILD INSTALL TEST)
@@ -314,8 +283,8 @@ function(_Prerequisite_Debug_Dump name)
   
   # Check each property and display if set
   foreach(prop ${all_properties})
-    get_property(value GLOBAL PROPERTY _PREREQUISITE_${name}_${prop})
-    get_property(is_set GLOBAL PROPERTY _PREREQUISITE_${name}_${prop} SET)
+    get_property(value GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_${prop})
+    get_property(is_set GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_${prop} SET)
     if(is_set)
       message(STATUS "  ${prop} = ${value}")
     endif()
@@ -340,7 +309,7 @@ endfunction()
 # - Extract single-value args like PREFIX, SOURCE_DIR, etc.
 # - Extract multi-value args like DEPENDS, COMMANDS, and all step-specific options
 # - Store all parsed arguments as global properties using pattern:
-#   _PREREQUISITE_${name}_${property_name}
+#   ${_PREREQUISITE_PREFIX}_${name}_${property_name}
 # - This allows other helper functions to retrieve arguments using
 #   get_property(GLOBAL) without needing PARENT_SCOPE variable passing
 # - Follows the same approach as ExternalProject and FetchContent
@@ -375,25 +344,25 @@ function(_Prerequisite_Parse_Arguments name)
   # Store each parsed argument as a global property
   foreach(option ${options})
     if(PA_${option})
-      set_property(GLOBAL PROPERTY _PREREQUISITE_${name}_${option} TRUE)
+      set_property(GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_${option} TRUE)
     endif()
   endforeach()
   
   foreach(arg ${oneValueArgs})
     if(DEFINED PA_${arg})
-      set_property(GLOBAL PROPERTY _PREREQUISITE_${name}_${arg} "${PA_${arg}}")
+      set_property(GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_${arg} "${PA_${arg}}")
     endif()
   endforeach()
   
   foreach(arg ${multiValueArgs})
     if(DEFINED PA_${arg})
-      set_property(GLOBAL PROPERTY _PREREQUISITE_${name}_${arg} "${PA_${arg}}")
+      set_property(GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_${arg} "${PA_${arg}}")
     endif()
   endforeach()
   
   # Validate argument combinations
-  get_property(has_git GLOBAL PROPERTY _PREREQUISITE_${name}_GIT_REPOSITORY SET)
-  get_property(has_url GLOBAL PROPERTY _PREREQUISITE_${name}_URL SET)
+  get_property(has_git GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_GIT_REPOSITORY SET)
+  get_property(has_url GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_URL SET)
   if(has_git AND has_url)
     message(FATAL_ERROR "Prerequisite ${name}: GIT_REPOSITORY and URL are mutually exclusive")
   endif()
@@ -408,7 +377,7 @@ function(_Prerequisite_Setup_Directories name)
   
   # First pass: compute defaults
   foreach(var ${directory_vars})
-    get_property(user_value GLOBAL PROPERTY _PREREQUISITE_${name}_${var})
+    get_property(user_value GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_${var})
     
     if(user_value)
       set(${var} "${user_value}")
@@ -432,197 +401,238 @@ function(_Prerequisite_Setup_Directories name)
   
   # Second pass: store final values and create directories
   foreach(var ${directory_vars})
-    set_property(GLOBAL PROPERTY _PREREQUISITE_${name}_${var} "${${var}}")
+    set_property(GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_${var} "${${var}}")
     file(MAKE_DIRECTORY "${${var}}")
   endforeach()
 endfunction()
 
-
-# Process each step in order (DOWNLOAD, UPDATE, CONFIGURE, BUILD, INSTALL, TEST)
-function(_Prerequisite_Process_Steps name)
-  # Retrieve configure-time flag and necessary properties
-  get_property(is_configure_time GLOBAL PROPERTY _PREREQUISITE_${name}_IS_CONFIGURE_TIME)
-  get_property(prerequisite_depends GLOBAL PROPERTY _PREREQUISITE_${name}_DEPENDS)
-  
-  # Get properties for variable substitution
-  foreach(var ${_PREREQUISITE_SUBSTITUTION_VARS})
-    if(var STREQUAL "NAME")
-      set(${var} "${name}")
-    else()
-      get_property(${var} GLOBAL PROPERTY _PREREQUISITE_${name}_${var})
-    endif()
+# Substitute @PREREQUISITE_*@ variables in command arguments
+# Requires the substitution variables to be set in parent scope
+function(_Prerequisite_Substitute_Variables input_list out_var)
+  set(result "")
+  foreach(item ${input_list})
+    set(substituted "${item}")
+    foreach(var ${_PREREQUISITE_SUBSTITUTION_VARS})
+      if(DEFINED ${var})
+        string(REPLACE "@PREREQUISITE_${var}@" "${${var}}" substituted "${substituted}")
+      endif()
+    endforeach()
+    list(APPEND result "${substituted}")
   endforeach()
+  set(${out_var} "${result}" PARENT_SCOPE)
+endfunction()
+
+# Resolve file dependencies for a step using glob patterns
+function(_Prerequisite_Resolve_File_Dependencies patterns out_files out_uses_file_deps)
+  set(resolved_files "")
+  set(uses_file_deps FALSE)
   
-  set(previous_stamp_file "")
+  if(NOT patterns)
+    set(${out_files} "" PARENT_SCOPE)
+    set(${out_uses_file_deps} FALSE PARENT_SCOPE)
+    return()
+  endif()
   
-  # Process each step in order
-  foreach(step ${_PREREQUISITE_STEPS})
-    # Step 1: Check if this step has commands defined
-    get_property(step_command GLOBAL PROPERTY _PREREQUISITE_${name}_${step}_COMMAND)
-    if(NOT step_command)
-      continue()
-    endif()
-    
-    # Step 2: Process file dependencies for this step
-    get_property(step_depends GLOBAL PROPERTY _PREREQUISITE_${name}_${step}_DEPENDS)
-    set(uses_file_deps FALSE)
-    set(resolved_file_deps "")
-    
-    if(step_depends)
-      set(uses_file_deps TRUE)
-      
-      # Expand @PREREQUISITE_*@ variables in patterns
-      set(expanded_patterns "")
-      foreach(pattern ${step_depends})
-        foreach(var ${_PREREQUISITE_SUBSTITUTION_VARS})
-          string(REPLACE "@PREREQUISITE_${var}@" "${${var}}" pattern "${pattern}")
-        endforeach()
-        list(APPEND expanded_patterns "${pattern}")
-      endforeach()
-      
-      # Process GLOB/GLOB_RECURSE patterns
-      set(glob_mode "")
-      set(current_patterns "")
-      
-      foreach(arg ${expanded_patterns})
-        if(arg STREQUAL "GLOB" OR arg STREQUAL "GLOB_RECURSE")
-          # Process any accumulated patterns with previous mode
-          if(glob_mode AND current_patterns)
-            if(glob_mode STREQUAL "GLOB")
-              file(GLOB pattern_files ${current_patterns})
-            else()
-              file(GLOB_RECURSE pattern_files ${current_patterns})
-            endif()
-            list(APPEND resolved_file_deps ${pattern_files})
-          endif()
-          # Start new glob mode
-          set(glob_mode "${arg}")
-          set(current_patterns "")
-        else()
-          # Accumulate patterns for current mode
-          list(APPEND current_patterns "${arg}")
-        endif()
-      endforeach()
-      
-      # Process final batch of patterns
+  set(uses_file_deps TRUE)
+  
+  # Process GLOB/GLOB_RECURSE patterns
+  set(glob_mode "")
+  set(current_patterns "")
+  
+  foreach(arg ${patterns})
+    if(arg STREQUAL "GLOB" OR arg STREQUAL "GLOB_RECURSE")
+      # Process any accumulated patterns with previous mode
       if(glob_mode AND current_patterns)
         if(glob_mode STREQUAL "GLOB")
           file(GLOB pattern_files ${current_patterns})
         else()
           file(GLOB_RECURSE pattern_files ${current_patterns})
         endif()
-        list(APPEND resolved_file_deps ${pattern_files})
+        list(APPEND resolved_files ${pattern_files})
       endif()
-      
-      # Verify we found files (zero matches should be fatal error)
-      if(NOT resolved_file_deps)
-        message(FATAL_ERROR "Prerequisite ${name}: ${step}_DEPENDS patterns matched no files: ${expanded_patterns}")
-      endif()
+      # Start new glob mode
+      set(glob_mode "${arg}")
+      set(current_patterns "")
+    else()
+      # Accumulate patterns for current mode
+      list(APPEND current_patterns "${arg}")
     endif()
-    
-    # Set up paths for this step
-    set(stamp_file "${STAMP_DIR}/${name}-${step}")
-    
-    # Step 3: Immediate execution if at configure time
-    if(is_configure_time)
-      set(needs_to_run FALSE)
-      
-      if(uses_file_deps)
-        # Compare file timestamps with stamp file
-        if(NOT EXISTS "${stamp_file}")
-          set(needs_to_run TRUE)
-        else()
-          # Check if any dependency files are newer than stamp
-          foreach(dep_file ${resolved_file_deps})
-            if(EXISTS "${dep_file}" AND "${dep_file}" IS_NEWER_THAN "${stamp_file}")
-              set(needs_to_run TRUE)
-              break()
-            endif()
-          endforeach()
-        endif()
-      else()
-        # Check if stamp file exists
-        if(NOT EXISTS "${stamp_file}")
-          set(needs_to_run TRUE)
-        endif()
-      endif()
-      
-      if(needs_to_run)
-        # Perform variable substitution
-        set(substituted_command "")
-        foreach(cmd_part ${step_command})
-          foreach(var ${_PREREQUISITE_SUBSTITUTION_VARS})
-            string(REPLACE "@PREREQUISITE_${var}@" "${${var}}" cmd_part "${cmd_part}")
-          endforeach()
-          list(APPEND substituted_command "${cmd_part}")
-        endforeach()
-        
-        message(STATUS "Prerequisite ${name}: Running ${step} step immediately")
-        execute_process(
-          COMMAND ${substituted_command}
-          WORKING_DIRECTORY "${BINARY_DIR}"
-          RESULT_VARIABLE result
-        )
-        
-        if(NOT result EQUAL 0)
-          # Clean up stamps for this and subsequent steps
-          foreach(cleanup_step ${_PREREQUISITE_STEPS})
-            file(REMOVE "${STAMP_DIR}/${name}-${cleanup_step}")
-            if(cleanup_step STREQUAL step)
-              break()
-            endif()
-          endforeach()
-          message(FATAL_ERROR "Prerequisite ${name}: ${step} step failed")
-        endif()
-        
-        # Create stamp file
-        file(TOUCH "${stamp_file}")
-      endif()
+  endforeach()
+  
+  # Process final batch of patterns
+  if(glob_mode AND current_patterns)
+    if(glob_mode STREQUAL "GLOB")
+      file(GLOB pattern_files ${current_patterns})
+    else()
+      file(GLOB_RECURSE pattern_files ${current_patterns})
     endif()
+    list(APPEND resolved_files ${pattern_files})
+  endif()
+  
+  set(${out_files} "${resolved_files}" PARENT_SCOPE)
+  set(${out_uses_file_deps} "${uses_file_deps}" PARENT_SCOPE)
+endfunction()
+
+# Execute a step immediately during configure time
+function(_Prerequisite_Execute_Immediate name step command working_dir stamp_file)
+  _Prerequisite_Substitute_Variables("${command}" substituted_command)
+  
+  message(STATUS "Prerequisite ${name}: Running ${step} step immediately")
+  execute_process(
+    COMMAND ${substituted_command}
+    WORKING_DIRECTORY "${working_dir}"
+    RESULT_VARIABLE result
+  )
+  
+  if(NOT result EQUAL 0)
+    # Clean up stamps for this and subsequent steps
+    foreach(cleanup_step ${_PREREQUISITE_STEPS})
+      get_property(stamp_dir GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_STAMP_DIR)
+      file(REMOVE "${stamp_dir}/${name}-${cleanup_step}")
+      if(cleanup_step STREQUAL step)
+        break()
+      endif()
+    endforeach()
+    message(FATAL_ERROR "Prerequisite ${name}: ${step} step failed")
+  endif()
+  
+  # Create stamp file
+  file(TOUCH "${stamp_file}")
+endfunction()
+
+# Create build-time target for a step
+function(_Prerequisite_Create_Build_Target name step command working_dir stamp_file dependencies)
+  string(TOLOWER "${step}" step_lower)
+  
+  # Substitute variables in command for build-time execution
+  _Prerequisite_Substitute_Variables("${command}" substituted_command)
+  
+  # Create the custom command that produces a stamp file
+  add_custom_command(
+    OUTPUT "${stamp_file}"
+    COMMAND ${substituted_command}
+    COMMAND ${CMAKE_COMMAND} -E touch "${stamp_file}"
+    DEPENDS ${dependencies}
+    WORKING_DIRECTORY "${working_dir}"
+    COMMENT "Prerequisite ${name}: Running ${step} step"
+  )
+  
+  # Create named target that depends on the stamp file
+  add_custom_target(${name}-${step_lower}
+    DEPENDS "${stamp_file}"
+  )
+  
+  # Create force target (always removes stamp then runs)
+  add_custom_target(${name}-force-${step_lower}
+    COMMAND ${CMAKE_COMMAND} -E remove "${stamp_file}"
+    COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target ${name}-${step_lower}
+    COMMENT "Prerequisite ${name}: Force ${step} step"
+  )
+endfunction()
+
+# Process a single prerequisite step
+function(_Prerequisite_Process_Single_Step name step is_configure_time previous_stamp_file out_stamp_file)
+  # Get step command
+  get_property(step_command GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_${step}_COMMAND)
+  if(NOT step_command)
+    set(${out_stamp_file} "${previous_stamp_file}" PARENT_SCOPE)
+    return()
+  endif()
+  
+  # Get directories
+  get_property(STAMP_DIR GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_STAMP_DIR)
+  get_property(BINARY_DIR GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_BINARY_DIR)
+  
+  # Set up stamp file path
+  set(stamp_file "${STAMP_DIR}/${name}-${step}")
+  
+  # Process file dependencies
+  get_property(step_depends GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_${step}_DEPENDS)
+  if(step_depends)
+    # Substitute variables in patterns
+    _Prerequisite_Substitute_Variables("${step_depends}" expanded_patterns)
+    # Resolve file patterns
+    _Prerequisite_Resolve_File_Dependencies("${expanded_patterns}" resolved_files uses_file_deps)
     
-    # Step 4: Create build-time targets
-    string(TOLOWER "${step}" step_lower)
-    
-    # Prepare dependencies for add_custom_command
-    set(step_deps "")
-    if(previous_stamp_file)
-      list(APPEND step_deps "${previous_stamp_file}")
+    if(uses_file_deps AND NOT resolved_files)
+      message(FATAL_ERROR "Prerequisite ${name}: ${step}_DEPENDS patterns matched no files: ${expanded_patterns}")
     endif()
+  else()
+    set(resolved_files "")
+    set(uses_file_deps FALSE)
+  endif()
+  
+  # Immediate execution if at configure time
+  if(is_configure_time)
+    set(needs_to_run FALSE)
+    
     if(uses_file_deps)
-      list(APPEND step_deps ${resolved_file_deps})
+      # Compare file timestamps with stamp file
+      if(NOT EXISTS "${stamp_file}")
+        set(needs_to_run TRUE)
+      else()
+        # Check if any dependency files are newer than stamp
+        foreach(dep_file ${resolved_files})
+          if(EXISTS "${dep_file}" AND "${dep_file}" IS_NEWER_THAN "${stamp_file}")
+            set(needs_to_run TRUE)
+            break()
+          endif()
+        endforeach()
+      endif()
+    else()
+      # Check if stamp file exists
+      if(NOT EXISTS "${stamp_file}")
+        set(needs_to_run TRUE)
+      endif()
     endif()
     
-    # Create the custom command that produces a stamp file
-    add_custom_command(
-      OUTPUT "${stamp_file}"
-      COMMAND ${step_command}
-      COMMAND ${CMAKE_COMMAND} -E touch "${stamp_file}"
-      DEPENDS ${step_deps}
-      WORKING_DIRECTORY "${BINARY_DIR}"
-      COMMENT "Prerequisite ${name}: Running ${step} step"
-    )
-    
-    # Create named target that depends on the stamp file
-    add_custom_target(${name}-${step_lower}
-      DEPENDS "${stamp_file}"
-    )
-    
-    # Update previous stamp for next iteration
+    if(needs_to_run)
+      _Prerequisite_Execute_Immediate(${name} ${step} "${step_command}" "${BINARY_DIR}" "${stamp_file}")
+    endif()
+  endif()
+  
+  # Create build-time targets
+  set(step_deps "")
+  if(previous_stamp_file)
+    list(APPEND step_deps "${previous_stamp_file}")
+  endif()
+  if(uses_file_deps)
+    list(APPEND step_deps ${resolved_files})
+  endif()
+  
+  _Prerequisite_Create_Build_Target(${name} ${step} "${step_command}" "${BINARY_DIR}" "${stamp_file}" "${step_deps}")
+  
+  # Return the stamp file for next iteration
+  set(${out_stamp_file} "${stamp_file}" PARENT_SCOPE)
+endfunction()
+
+# Process each step in order (DOWNLOAD, UPDATE, CONFIGURE, BUILD, INSTALL, TEST)
+function(_Prerequisite_Process_Steps name)
+  # Retrieve configure-time flag
+  get_property(is_configure_time GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_IS_CONFIGURE_TIME)
+  
+  # Set up variables for substitution (needed by helper functions)
+  foreach(var ${_PREREQUISITE_SUBSTITUTION_VARS})
+    if(var STREQUAL "NAME")
+      set(${var} "${name}")
+    else()
+      get_property(${var} GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_${var})
+    endif()
+  endforeach()
+  
+  # Process each step
+  set(previous_stamp_file "")
+  foreach(step ${_PREREQUISITE_STEPS})
+    _Prerequisite_Process_Single_Step(${name} ${step} ${is_configure_time} "${previous_stamp_file}" stamp_file)
     set(previous_stamp_file "${stamp_file}")
-    
-    # Create force target (always removes stamp then runs)
-    add_custom_target(${name}-force-${step_lower}
-      COMMAND ${CMAKE_COMMAND} -E remove "${stamp_file}"
-      COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target ${name}-${step_lower}
-      COMMENT "Prerequisite ${name}: Force ${step} step"
-    )
   endforeach()
   
   # Handle prerequisite-level dependencies
+  get_property(prerequisite_depends GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_DEPENDS)
   if(prerequisite_depends)
     foreach(dep_prereq ${prerequisite_depends})
       foreach(step ${_PREREQUISITE_STEPS})
-        get_property(step_command GLOBAL PROPERTY _PREREQUISITE_${name}_${step}_COMMAND)
+        get_property(step_command GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_${step}_COMMAND)
         if(step_command)
           string(TOLOWER "${step}" step_lower)
           add_dependencies(${name}-${step_lower} ${dep_prereq}-${step_lower})
@@ -632,43 +642,22 @@ function(_Prerequisite_Process_Steps name)
   endif()
 endfunction()
 
-# Set up any final properties or variables needed
-function(_Prerequisite_Finalize name)
-endfunction()
-
 function(Prerequisite_Add name)
   _Prerequisite_Is_Configure_Time(is_configure_time)
-  set_property(GLOBAL PROPERTY _PREREQUISITE_${name}_IS_CONFIGURE_TIME "${is_configure_time}")
+  set_property(GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_IS_CONFIGURE_TIME "${is_configure_time}")
   _Prerequisite_Parse_Arguments(${name} ${ARGN})
   _Prerequisite_Setup_Directories(${name})
   _Prerequisite_Process_Steps(${name})
-  _Prerequisite_Finalize(${name})
   
   message(STATUS "Prerequisite_Add(${name}) - stub implementation")
 endfunction()
 
-function(Prerequisite_Add_Step name step)
-  message(STATUS "Prerequisite_Add_Step(${name} ${step}) - stub implementation") 
-  # TODO: Implement custom step addition
-endfunction()
-
 function(Prerequisite_Get_Property name property output_variable)
   # Retrieve properties from a prerequisite
-  # - Uses global properties stored with pattern _PREREQUISITE_${name}_${property_name}
+  # - Uses global properties stored with pattern ${_PREREQUISITE_PREFIX}_${name}_${property_name}
   # - This matches the storage approach used by _Prerequisite_Parse_Arguments
   # - Follows the same design as ExternalProject_Get_Property and FetchContent
   # - All options from Prerequisite_Add can be retrieved this way
-  get_property(value GLOBAL PROPERTY _PREREQUISITE_${name}_${property})
+  get_property(value GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_${property})
   set(${output_variable} "${value}" PARENT_SCOPE)
-endfunction()
-
-function(Prerequisite_Force_Step name step)
-  message(STATUS "Prerequisite_Force_Step(${name} ${step}) - stub implementation")
-  # TODO: Implement forced step execution
-endfunction()
-
-function(Prerequisite_Step_Current name step output_variable)
-  message(STATUS "Prerequisite_Step_Current(${name} ${step}) - stub implementation")
-  # TODO: Implement step currency checking
-  set(${output_variable} FALSE PARENT_SCOPE)
 endfunction()

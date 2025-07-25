@@ -80,3 +80,7 @@ add_prerequisite_test(stamp/missing COMMAND "--target test_missing_stamp")
 # File dependency tracking tests
 add_prerequisite_test(stamp/file_deps COMMAND "--target test_file_deps")
 add_prerequisite_test(stamp/file_timestamp COMMAND "--target test_timestamp_behavior")
+
+# Variable substitution tests
+add_prerequisite_test(substitution/immediate)
+add_prerequisite_test(substitution/deferred COMMAND "--target verify_deferred_substitution")
