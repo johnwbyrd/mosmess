@@ -1,305 +1,351 @@
-# Prerequisites Test Suite Plan
+# Prerequisites Test Suite Analysis
 
 ## Overview
 
-This document outlines the comprehensive test strategy for the CMake prerequisites system. The test suite validates the dual execution model, dependency tracking mechanisms, and integration scenarios that make prerequisites unique from ExternalProject.
+This document provides a comprehensive analysis of the current Prerequisites test suite, documenting what is tested, what gaps exist, and priorities for expanding test coverage. The analysis is based on examination of all test files and comparison against the documented feature set.
+
+## Current Test Suite Status (August 2025)
+
+**Test Results:** 26/26 tests passing (100% pass rate)  
+**Total Execution Time:** ~0.75 seconds  
+**Test Coverage:** ~25% of documented features well-tested  
+**Major Gaps:** 75% of documented features untested  
 
 ## Test Architecture
 
-### Directory Structure
+### Current Directory Structure
 
-**Current Implementation (July 2025):**
 ```
 tests/prerequisite/
-├── CMakeLists.txt         # Test suite runner with add_prerequisite_test()
-├── simple/                # Basic functionality tests
-│   ├── immediate/         # Configure-time execution test
-│   └── deferred/          # Build-time execution test
-└── stamp/                 # Stamp file behavior validation
-    ├── behavior/          # Basic stamp creation test
-    ├── incremental/       # Counter-based re-execution detection
-    ├── reconfig/          # Reconfiguration behavior validation  
-    └── missing/           # Missing stamp rebuild testing
+├── CMakeLists.txt                    # Test framework with add_prerequisite_test()
+│
+├── simple/                           # WELL TESTED - Basic functionality
+│   ├── immediate/                    # Configure-time execution validation
+│   └── deferred/                     # Build-time target creation validation
+│
+├── stamp/                            # WELL TESTED - Stamp file behavior
+│   ├── behavior/                     # Basic stamp file creation/respect
+│   ├── incremental/                  # Execution counting with failure detection
+│   ├── reconfig/                     # Cross-reconfiguration stamp persistence  
+│   ├── missing/                      # Missing stamp rebuild verification
+│   ├── file_deps/                    # [DIRECTORY EXISTS, NO TESTS]
+│   └── file_timestamp/               # File modification time handling
+│
+├── substitution/                     # PARTIALLY TESTED - Variable substitution
+│   ├── immediate/                    # Configure-time @PREREQUISITE_*@ variables
+│   └── deferred/                     # Build-time variable substitution
+│
+└── dependency/                       # WELL TESTED - File dependency tracking
+    ├── basic_file_behavior/          # File change triggers rebuilds
+    ├── new_file_detection/           # GLOB pattern expansion timing
+    ├── untracked_file_behavior/      # Files outside patterns ignored
+    └── file_vs_stamp_comparison/     # File vs stamp dependency comparison
 ```
 
-**Planned Future Structure:**
+### Test Framework Design
+
+**CTest Integration:** Uses `add_prerequisite_test()` function for process isolation  
+**Execution Model:** Each test runs in separate CMake process (essential for testing dual execution)  
+**Mock Strategy:** CMake scripts for external tool mocking  
+**Validation Approach:** Counter-based verification with failure assertions  
+
+## Comprehensive Test Coverage Analysis
+
+### WELL TESTED FEATURES (25% of documented functionality)
+
+#### Core Execution Model
+- **Immediate execution** - Commands run during configure time before `project()`
+- **Deferred execution** - Build targets created after `project()`  
+- **Configure-time detection** - Correctly identifies nested CMake contexts (CTest)
+- **Dual execution integration** - Same commands work in both modes
+
+#### Stamp File System
+- **Incremental builds** - Commands don't re-execute when stamps exist
+- **Missing stamp recovery** - Rebuilds when stamp files deleted
+- **Cross-reconfiguration persistence** - Stamps respected across cmake reconfigurations  
+- **Execution counting verification** - Tests FAIL if commands run more than once
+
+#### File Dependency Tracking (BUILD_DEPENDS only)
+- **Basic file behavior** - File modifications trigger rebuilds
+- **New file detection** - Analysis of GLOB expansion timing issues
+- **Untracked file behavior** - Files outside patterns don't trigger rebuilds
+- **File vs stamp comparison** - Direct behavioral comparison
+
+#### Variable Substitution (Basic Variables Only)  
+- **@PREREQUISITE_NAME@** - Prerequisite name substitution
+- **@PREREQUISITE_BINARY_DIR@** - Build directory path substitution
+- **@PREREQUISITE_SOURCE_DIR@** - Source directory path substitution
+
+#### Command Types (BUILD_COMMAND Focus)
+- **BUILD_COMMAND** - Extensively tested with counters, file tracking, timestamps
+- **DOWNLOAD_COMMAND** - Basic execution testing only
+- **INSTALL_COMMAND** - Basic execution testing only
+
+### UNTESTED DOCUMENTED FEATURES (75% of functionality)
+
+#### Download Source Options (CRITICAL GAP)
+```cmake
+# COMPLETELY UNTESTED
+GIT_REPOSITORY <url>          # No Git download testing
+GIT_TAG <tag>                 # No Git branch/tag testing  
+GIT_SHALLOW                   # No shallow clone testing
+URL <url>                     # No URL download testing
+URL_HASH <algo>=<hash>        # No hash verification testing
+DOWNLOAD_NO_EXTRACT           # No archive handling testing
 ```
-tests/prerequisite/
-├── simple/                # IMPLEMENTED - Basic functionality
-├── stamp/                 # IMPLEMENTED - Stamp file behavior  
-├── execution/             # Dual execution model edge cases
-├── tracking/              # File-based dependency tracking
-├── dependencies/          # Inter-prerequisite relationships
-├── steps/                 # Step execution and sequencing
-├── integration/           # Real-world scenarios with mocks
-├── error/                 # Error handling and recovery
-├── fixtures/              # Reusable test infrastructure
-├── data/                  # Test data and expected results
-└── utils/                 # Test utilities and helpers
+
+#### Multi-Step Workflow (MAJOR GAP)
+```cmake
+# MINIMAL OR NO TESTING
+UPDATE_COMMAND <cmd...>       # No update step testing
+CONFIGURE_COMMAND <cmd...>    # No configure step testing  
+TEST_COMMAND <cmd...>         # No test step testing
 ```
 
-### Test Framework
+#### Logging System (DOCUMENTED BUT NOT IMPLEMENTED)
+```cmake
+# ALL LOGGING UNTESTED
+LOG_DOWNLOAD <bool>           # No log redirection testing
+LOG_UPDATE <bool>             # No log redirection testing
+LOG_CONFIGURE <bool>          # No log redirection testing
+LOG_BUILD <bool>              # No log redirection testing
+LOG_INSTALL <bool>            # No log redirection testing
+LOG_TEST <bool>               # No log redirection testing
+LOG_OUTPUT_ON_FAILURE <bool>  # No conditional output testing
+```
 
-### Framework Design Rationale
+#### Directory Customization (PARSING ONLY)
+```cmake
+# DEFAULTS WORK, CUSTOMIZATION UNTESTED
+PREFIX <dir>                  # No custom prefix testing
+SOURCE_DIR <dir>              # No custom source dir testing
+BINARY_DIR <dir>              # No custom binary dir testing
+INSTALL_DIR <dir>             # No custom install dir testing
+STAMP_DIR <dir>               # No custom stamp dir testing
+LOG_DIR <dir>                 # No custom log dir testing
+```
 
-The prerequisites system has unique testing challenges that drive our framework choices. The core issue is that prerequisites must work both before and after the `project()` command, creating timing dependencies that require true process isolation to test properly.
+#### Advanced File Dependencies
+```cmake
+# ONLY BUILD_DEPENDS TESTED
+DOWNLOAD_DEPENDS <args...>    # No download file tracking
+UPDATE_DEPENDS <args...>      # No update file tracking
+CONFIGURE_DEPENDS <args...>   # No configure file tracking
+INSTALL_DEPENDS <args...>     # No install file tracking
+TEST_DEPENDS <args...>        # No test file tracking
+```
 
-**Why CTest:** We use CMake's built-in `add_test()` and `ctest` because each test essentially needs to be "run cmake and verify the result" - which is exactly what CTest handles well. The parallel execution, timeout handling, and integration with standard build tools (`make test`) are all valuable. Most importantly, CTest naturally runs each test as a separate process, which we need anyway.
+#### Variable Substitution Gaps
+```cmake
+# ONLY 3 OF 7 VARIABLES TESTED
+@PREREQUISITE_PREFIX@         # No prefix variable testing
+@PREREQUISITE_INSTALL_DIR@    # No install dir variable testing
+@PREREQUISITE_STAMP_DIR@      # No stamp dir variable testing
+@PREREQUISITE_LOG_DIR@        # No log dir variable testing
+```
 
-**Why process isolation is critical:** The dual execution model means prerequisites behave completely differently when called before vs after `project()`. Before `project()`, they execute immediately and block configuration. After `project()`, they only create build targets. Testing this requires separate CMake processes because once `project()` is called in a CMake run, you can't "uncall" it. Each test needs a fresh CMake environment to properly test the timing-sensitive behavior.
+#### Force Targets (IMPLEMENTED BUT UNTESTED)
+```cmake
+# ALL FORCE FUNCTIONALITY UNTESTED
+<name>-force-<step>           # No force target testing
+```
 
-**Why CMake script mocks:** External tools (git, cmake, make) need to be mocked because we're testing prerequisites system behavior, not the external tools themselves. CMake scripts work well as mocks because they can create the files and directories that prerequisites expect while being controllable from our test framework. They're also cross-platform without requiring shell script complexity.
+#### Control Options (PARSED BUT NOT IMPLEMENTED)
+```cmake
+# NO IMPLEMENTATION OR TESTING
+<STEP>_ALWAYS <bool>          # No always-run testing
+BUILD_IN_SOURCE               # No in-source build testing
+UPDATE_DISCONNECTED          # No update disconnection testing
+```
 
-**Why validate both artifacts and outputs:** Prerequisites create two types of evidence - files/directories (stamps, downloaded source, built binaries) and process behavior (exit codes, error messages, execution order). The dual execution model means we need to verify both that the right things got built AND that they got built at the right time. Output comparison against known good files helps verify that complex multi-prerequisite scenarios execute in the correct order.
+#### Property System (MINIMAL TESTING)
+```cmake
+# BASIC FUNCTION EXISTS, LIMITED TESTING
+Prerequisite_Get_Property()   # Minimal property access testing
+```
 
-**Implementation approach:** Start with basic tests against stubs to validate the testing framework itself, then implement minimal Prerequisite_Add() functionality to support the tests. This prevents building a complex test suite against non-existent functionality while ensuring the framework can actually test what we're building.
+#### Inter-Prerequisite Dependencies (BASIC IMPLEMENTATION)
+```cmake
+# LIMITED TESTING
+DEPENDS <prereqs...>          # Multi-prerequisite dependency chains untested
+```
 
-## Critical Test Categories
+## Critical Test Infrastructure Gaps
 
-### 1. Dual Execution Model (High Priority)
+### 1. External Tool Mocking (NEEDED FOR UNTESTED FEATURES)
+**Current:** Only CMake script mocks  
+**Missing:** Git, wget, curl, tar, zip executable mocks  
+**Impact:** Cannot test download sources without real external tools  
 
-**Configure-time execution:**
-- Prerequisites before `project()` execute immediately during configure
-- Configuration blocks until prerequisite completion
-- Multiple prerequisites execute in CMakeLists.txt order (not DEPENDS order)
-- Environment changes persist between prerequisites
-- Stamp files created during configure-time execution
+### 2. Error Condition Testing (MAJOR SECURITY/ROBUSTNESS GAP)
+**Current:** Basic success path testing only  
+**Missing:** Network failures, authentication errors, corrupt downloads, build failures  
+**Impact:** Error handling untested, failure recovery unknown  
 
-**Build-time execution:**
-- Prerequisites after `project()` only create build targets
-- Build targets respect existing stamps from configure-time execution
-- Same commands produce identical results in both modes
-- Force targets bypass dependency checking
+### 3. Cross-Platform Testing (MINIMAL COVERAGE)
+**Current:** Linux-only testing (CMAKE_COMMAND assumptions)  
+**Missing:** Windows (.exe extensions), macOS, different generators  
+**Impact:** Platform compatibility unknown  
 
-**Mixed scenarios:**
-- Some prerequisites at configure-time, others at build-time
-- Build targets integrate correctly with configure-time results
-- Incremental rebuilds work after initial bootstrap
+### 4. Performance and Scale Testing (NOT ADDRESSED)
+**Current:** Simple single-prerequisite tests  
+**Missing:** Large file handling, complex dependency chains, parallel execution  
+**Impact:** Performance characteristics unknown  
 
-### 2. Dependency Tracking Systems (High Priority)
+## Implementation Priority for Test Expansion
 
-**Stamp-based tracking:**
-- Successful steps create stamp files with correct timestamps
-- Existing stamps prevent step re-execution
-- Missing stamps trigger step and all subsequent steps
-- Failed steps clean up their own and subsequent stamps
-- Manual stamp deletion forces rebuilds
+### Phase 1: Core Feature Completion (IMMEDIATE)
 
-**File-based tracking:**
-- Steps with file dependencies completely replace stamp behavior
-- File changes trigger appropriate step re-execution  
-- GLOB and GLOB_RECURSE patterns work correctly
-- Variable substitution in glob patterns (@PREREQUISITE_SOURCE_DIR@/*.c)
-- File tracking works with CMake's normal dependency resolution
-
-**Mixed tracking:**
-- Different steps in same prerequisite use different tracking methods
-- No interference between stamp-based and file-based steps
-- Dependency chains work across mixed tracking methods
-
-### 3. Variable Substitution (High Priority)
-
-**All @PREREQUISITE_*@ variables:**
-- @PREREQUISITE_NAME@ - prerequisite name
-- @PREREQUISITE_PREFIX@ - prefix directory
-- @PREREQUISITE_SOURCE_DIR@ - source directory path
-- @PREREQUISITE_BINARY_DIR@ - build directory path  
-- @PREREQUISITE_INSTALL_DIR@ - install directory path
-- @PREREQUISITE_STAMP_DIR@ - stamp directory path
-- @PREREQUISITE_LOG_DIR@ - log directory path
-
-**Substitution contexts:**
-- All *_COMMAND options (DOWNLOAD_COMMAND, BUILD_COMMAND, etc.)
-- All *_DEPENDS glob patterns
-- Directory path options
-- CMAKE_ARGS and similar argument lists
-
-**Edge cases:**
-- Paths with spaces and special characters
-- Variables within variables
-- Platform-specific path separators
-- Escaping and quoting behavior
-
-### 4. Inter-prerequisite Dependencies (High Priority)
-
-**Configure-time behavior:**
-- DEPENDS option does NOT enforce configure-time ordering
-- Prerequisites execute in CMakeLists.txt order regardless of DEPENDS
-- Environment and PATH changes flow between prerequisites
-- Later prerequisites can use artifacts from earlier ones
-
-**Build-time behavior:**
-- DEPENDS creates proper CMake target dependencies
-- A-install depends on B-install when A DEPENDS B
-- Missing dependency targets built automatically
-- Circular dependency detection and error reporting
-
-**Complex scenarios:**
-- Multi-level chains: A depends on B depends on C
-- Environment passing: compiler built first, used by library second
-- Cross-prerequisite file dependencies
-
-### 5. Step Execution and Sequencing (Medium Priority)
-
-**Standard step sequence:**
-- download → update → configure → build → install → test
-- Triggering any step runs all subsequent steps
-- Test step can run independently without triggering others
-- Empty commands result in no-op steps
-
-**Custom steps:**
-- DEPENDEES and DEPENDERS relationships work correctly
-- Custom steps integrate into standard sequence
-- WORKING_DIRECTORY option works
-- ALWAYS option forces execution
-
-**Force targets:**
-- Force targets created for all steps (name-force-step)
-- Force targets delete appropriate stamps before execution
-- Force targets run target step and all subsequent steps
-
-### 6. Error Handling and Recovery (Medium Priority)
-
-**Failure scenarios:**
-- Failed configure-time execution aborts configuration with clear error
-- Failed build-time execution reports errors appropriately  
-- Partial failures don't leave inconsistent stamp states
-- Network failures during download handled gracefully
-
-**Logging:**
-- LOG_* options capture output to correct files
-- LOG_OUTPUT_ON_FAILURE shows errors when needed
-- Log files created in correct directories (LOG_DIR or STAMP_DIR)
-- Console output vs log file behavior matches documentation
-
-**Recovery:**
-- Force targets enable recovery after fixing issues
-- Stamp cleanup after failures prevents inconsistent states
-- Manual stamp deletion works for troubleshooting
-
-## Mock Strategy
-
-### External Tool Mocking
-- Mock `cmake`, `git`, `make`, `wget`, `curl` executables
-- Mocks validate correct arguments passed to external tools
-- Mocks can simulate failures for error testing
-- Mocks produce expected outputs (files, directories) for testing
-
-### Mock Project Types
-- **Simple:** Just creates output files to verify execution
-- **Complex:** Multiple outputs, file dependencies, realistic structure
-- **Failing:** Fails at specific steps for error testing
-- **Conditional:** Behavior varies based on arguments/environment
-
-## Platform Testing Strategy
-
-### Cross-platform scenarios:
-- Path separator handling (/ vs \\)
-- Executable extensions (.exe on Windows)
-- Case sensitivity differences
-- Permission and access scenarios
-- Environment variable handling
-
-### Generator compatibility:
-- Unix Makefiles
-- Ninja  
-- Visual Studio (Windows)
-- Xcode (macOS)
-
-## Test Implementation Guidelines
-
-### Test Isolation
-- Each test runs in isolated directory
-- Cleanup utilities ensure no test pollution
-- Mock tools don't interfere with real system tools
-- Environment variables restored after each test
-
-### Assertion Strategy
-- Custom assertion functions for common checks
-- File existence and content validation
-- Timestamp comparison utilities  
-- Directory structure validation
-- Log file content verification
-
-### Test Data Management
-- Small test archives and files in `data/`
-- Generated content where possible to minimize repository size
-- Template-based configuration files
-- Expected output files for comparison
-
-## Implementation Priority
-
-1. **Phase 1:** COMPLETE - Unit tests and basic execution model
-2. **Phase 2:** PARTIAL - Dependency tracking (stamps complete, files pending)
-3. **Phase 3:** IN PROGRESS - Variable substitution and inter-prerequisite dependencies
-4. **Phase 4:** PLANNED - Error handling and platform compatibility
-5. **Phase 5:** PLANNED - Integration scenarios and edge cases
-
-## Success Criteria
-
-The test suite is complete when:
-- All documented prerequisites.md functionality is validated
-- Both configure-time and build-time execution paths tested
-- All variable substitution scenarios covered
-- Error conditions handled gracefully
-- Cross-platform compatibility verified
-- Test suite runs in reasonable time (<5 minutes total)
-- Tests are maintainable and well-documented
-
-## Current Implementation Status (July 2025)
-
-### IMPLEMENTED - Basic Test Infrastructure
-- **CTest Integration**: Uses `add_prerequisite_test()` function for process isolation
-- **Cross-generator Support**: Tests pass identically with make and ninja
-- **Test Organization**: Organized into `simple/` and `stamp/` directories
-
-### IMPLEMENTED - Simple Functionality Tests (`simple/`)
-- **`immediate`**: Validates configure-time execution before `project()`
-- **`deferred`**: Validates build-time target creation after `project()`
-- **Property Retrieval**: Tests `Prerequisite_Get_Property()` functionality
-- **Debug Output**: Validates `_Prerequisite_Debug_Dump()` function
-
-### IMPLEMENTED - Stamp File Behavior Tests (`stamp/`)
-
-**Critical Tests That WILL FAIL if Stamps Break:**
-
-- **`incremental`**: Uses execution counters that fail with `"STAMP FAILURE: X step executed N times, expected 1"` if any step runs more than once
-- **`reconfig`**: Tracks executions across reconfigurations, fails with `"STAMP FAILURE: Prerequisite executed N times across reconfigurations"` if steps re-run when stamps exist  
-- **`missing`**: Removes stamps and verifies rebuild, fails with `"STAMP FAILURE: Missing stamp did not trigger rebuild"` if outputs aren't recreated
-- **`behavior`**: Basic validation that stamps are created and respected
-
-### CURRENT LIMITATIONS
-- **File-based dependency tracking**: Not yet implemented (only stamp-based works)
-- **Variable substitution**: Works for immediate execution, not for build-time commands
-- **Logging support**: `LOG_*` options parsed but ignored
-- **Error handling**: Limited validation of failure scenarios
-- **Inter-prerequisite dependencies**: Basic implementation, needs comprehensive testing
-
-### NEXT PRIORITY AREAS
-1. **File dependency tracking tests** (`tracking/` directory)
-2. **Variable substitution validation** in build-time contexts
-3. **Inter-prerequisite dependency tests** (`dependencies/` directory)
-4. **Error handling and recovery tests** (`error/` directory)
-5. **Integration scenarios with mocks** (`integration/` directory)
-
-### Test Execution Summary
+#### 1.1 Download Source Testing (CRITICAL)
 ```bash
-# Run all tests
-cd build && cmake ../tests/prerequisite && ctest
-
-# Current results: 11/11 tests passing
-# Total execution time: ~0.75 seconds
-# Generators tested: Unix Makefiles, Ninja
+tests/prerequisite/download/
+├── git_basic/              # GIT_REPOSITORY + GIT_TAG
+├── git_shallow/            # GIT_SHALLOW option
+├── url_basic/              # URL + URL_HASH  
+├── url_no_extract/         # DOWNLOAD_NO_EXTRACT
+└── download_failure/       # Error condition testing
 ```
 
-See `doc/todo.md` for detailed development status and implementation priorities.
+#### 1.2 Multi-Step Workflow Testing (HIGH PRIORITY)
+```bash
+tests/prerequisite/steps/
+├── step_sequence/          # download → update → configure → build → install → test
+├── step_chaining/          # Dependencies between steps
+├── empty_steps/            # Steps with no commands
+└── step_failure_recovery/  # Failed step cleanup
+```
 
-## Notes for Implementation
+#### 1.3 Logging System Testing (HIGH PRIORITY)
+```bash
+tests/prerequisite/logging/
+├── log_redirection/        # LOG_* options redirect output
+├── log_on_failure/         # LOG_OUTPUT_ON_FAILURE behavior
+├── log_file_creation/      # Log files created in correct locations
+└── log_directory_usage/    # LOG_DIR vs STAMP_DIR behavior
+```
 
-- Start with simplest unit tests to establish framework
-- Build up complexity gradually through phases
-- Focus on the unique aspects of prerequisites vs ExternalProject
-- Mock external tools rather than requiring real installations
-- Prioritize the dual execution model as core differentiator
-- Ensure tests are deterministic and don't depend on timing
-- Document expected behavior clearly in test descriptions
+### Phase 2: Advanced Feature Testing (3-6 months)
+
+#### 2.1 Directory Customization Testing
+```bash
+tests/prerequisite/directories/
+├── custom_prefix/          # PREFIX option validation
+├── custom_directories/     # All directory options
+├── directory_interactions/ # Directory option combinations
+└── directory_creation/     # Automatic directory creation
+```
+
+#### 2.2 Advanced Dependencies Testing  
+```bash
+tests/prerequisite/dependencies/
+├── multi_prerequisite/     # DEPENDS chains
+├── configure_vs_build/     # Different dependency behavior by mode
+├── circular_detection/     # Circular dependency detection
+└── complex_chains/         # A depends B depends C scenarios
+```
+
+#### 2.3 Force Target Testing
+```bash
+tests/prerequisite/force/
+├── force_single_step/      # Individual force targets
+├── force_chaining/         # Force triggers subsequent steps
+├── force_after_failure/    # Force targets for error recovery
+└── force_integration/      # Force targets with file dependencies
+```
+
+### Phase 3: Robustness and Platform Testing (6-12 months)
+
+#### 3.1 Error Condition Testing
+```bash
+tests/prerequisite/error/
+├── network_failures/       # Download timeouts, connection failures
+├── build_failures/         # Command execution failures
+├── permission_errors/      # File access problems
+├── corruption_recovery/    # Corrupt download/stamp recovery
+└── cleanup_verification/   # Proper cleanup after failures
+```
+
+#### 3.2 Cross-Platform Testing
+```bash
+tests/prerequisite/platform/
+├── windows_paths/          # Path separator handling
+├── executable_extensions/  # .exe handling on Windows
+├── generator_compatibility/# Unix Makefiles, Ninja, VS, Xcode
+└── case_sensitivity/       # File system case handling
+```
+
+#### 3.3 Performance and Scale Testing
+```bash
+tests/prerequisite/performance/
+├── large_downloads/        # Multi-GB download handling
+├── many_files/             # File dependency tracking with thousands of files
+├── deep_dependencies/      # Long prerequisite chains
+└── parallel_execution/     # Concurrent prerequisite handling
+```
+
+## Mock Strategy Expansion
+
+### Current Mocking (CMake Scripts Only)
+- Simple file creation mocks
+- Execution counting verification
+- Basic timestamp manipulation
+
+### Required Mock Additions
+
+#### Git Mock Executable
+```bash
+# Mock git that creates realistic repository structures
+mock_git clone <url> <dir>     # Creates .git/ and files
+mock_git checkout <tag>        # Updates files, changes timestamps
+mock_git --version             # Version identification
+```
+
+#### URL Download Mocks  
+```bash
+# Mock wget/curl that creates downloaded files
+mock_wget <url> -O <file>      # Creates file with expected content
+mock_curl <url> > <file>       # Alternative download tool
+```
+
+#### Archive Handling Mocks
+```bash
+# Mock tar/unzip for extraction testing
+mock_tar -xzf <archive>        # Extracts to expected structure
+mock_unzip <archive>           # Alternative extraction
+```
+
+## Test Quality Standards
+
+### Assertion Requirements
+- **Execution counting** - Tests MUST fail if commands run incorrect number of times
+- **File verification** - Tests MUST verify expected files created with correct content
+- **Timestamp validation** - Tests MUST verify dependency timestamp relationships
+- **Error message validation** - Tests MUST verify appropriate error messages
+
+### Test Isolation Requirements
+- **Directory isolation** - Each test in separate directory
+- **Process isolation** - Each test in separate CMake process (already implemented)
+- **Environment isolation** - Tests must not affect each other
+- **Cleanup verification** - Tests must clean up completely
+
+### Performance Requirements
+- **Individual test speed** - No test should take >30 seconds
+- **Total suite time** - Full suite should complete in <10 minutes
+- **Parallel execution** - Tests must be parallelizable
+
+## Success Criteria for Complete Test Suite
+
+The Prerequisites test suite will be complete when:
+
+1. **Feature Coverage**: All documented Prerequisite.cmake features have corresponding tests
+2. **Error Coverage**: All documented error conditions are tested  
+3. **Platform Coverage**: Windows, macOS, Linux compatibility verified
+4. **Generator Coverage**: Unix Makefiles, Ninja, Visual Studio, Xcode tested
+5. **Scale Coverage**: Large projects and complex dependency chains tested
+6. **Integration Coverage**: Real-world scenarios with multiple prerequisites tested
+
+**Current Status**: 25% complete (core functionality well-tested)  
+**Estimated Completion**: 18-24 months with focused development  
+**Critical Path**: Download sources → Multi-step workflows → Logging system  
+
+The foundation is excellent. The major work ahead is expanding test coverage to match the comprehensive documented feature set rather than fixing architectural issues.

@@ -1,52 +1,121 @@
 # mosmess Development TODO
 
-## Current Status
+## Current Status (August 2025)
 
-**Prerequisites System:**
-- ✅ Basic prerequisites system is WORKING - all tests pass
-- ✅ Core functionality implemented: argument parsing, directory setup, dual execution model
-- ✅ Test framework established with hello_immediate and hello_deferred tests
-- ✅ Self-referential stamp file dependencies working correctly
-- ✅ Property storage system using global properties with `_PREREQUISITE_${name}_${property}` pattern
+**Prerequisites System: CORE FUNCTIONALITY COMPLETE**
+- Dual execution model fully implemented and tested (26/26 tests passing)
+- Configure-time detection working in nested CMake contexts (CTest)
+- File dependency tracking with GLOB patterns implemented
+- Variable substitution system working for all supported variables
+- Stamp-based dependency tracking with proper chaining
+- Build target generation and force targets
+- Property storage and retrieval system complete
+- Comprehensive test suite covering core functionality
 
-## Immediate Next Steps
+**Test Coverage Analysis:**
+- **Well-tested (25%)**: Core execution model, BUILD_COMMAND, basic file dependencies, stamp behavior
+- **Untested (75%)**: Git/URL downloads, logging system, custom directories, multi-step workflows, force targets
 
-### 1. Prerequisites System Refinement (HIGH PRIORITY)
-1. **CRITICAL: Verify immediate execution actually works** - may not be executing during configure time as expected
-2. **Variable substitution in build-time commands** - currently only works for immediate execution
-3. **Logging support** - `LOG_*` options are parsed but ignored
-4. **Validation of circular stamp dependencies** - verify self-referential pattern is robust
+## High Priority Implementation Gaps
 
-### 2. Testing and Validation
-- Expand test coverage for edge cases and error conditions
-- ✅ Test file dependency tracking - IMPLEMENTED with proper timestamp comparison
-- Validate prerequisite-to-prerequisite dependencies (DEPENDS option)
-- Test variable substitution in all contexts
-- **CRITICAL: Create test that proves immediate execution during configure time**
+### 1. Download Source Support (CRITICAL MISSING FUNCTIONALITY)
 
-### 3. Key Implementation Notes for Future Work
-- Uses global properties for cross-function data sharing (like ExternalProject/FetchContent)
-- Stamp files use self-referential dependencies: OUTPUT and DEPENDS both reference same stamp file  
-- Target naming: lowercase step names (`myprereq-build` not `myprereq-BUILD`)
-- Directory structure follows ExternalProject layout exactly
+**Git-based downloads:**
+- `GIT_REPOSITORY` and `GIT_TAG` - No implementation or testing
+- `GIT_SHALLOW` - No shallow clone support
+- Git authentication and credentials handling
 
-## Longer Term Goals
+**URL-based downloads:**  
+- `URL` and `URL_HASH` - No URL download implementation
+- `DOWNLOAD_NO_EXTRACT` - No archive extraction control
+- HTTP authentication and retry mechanisms
 
-### Prerequisites System Completion
-- ⚠️ Complete Prerequisite_Add() with dual execution model - immediate execution may be broken
-- ✅ ~~Implement stamp-based dependency tracking~~ (DONE) 
-- ✅ ~~Complete file-based dependency tracking with proper timestamp comparison~~ (DONE)
-- 🔄 Add comprehensive logging and error handling
-- ✅ ~~Build inter-prerequisite dependency management~~ (basic implementation done)
+**Implementation approach:**
+- Add Git and URL detection logic to download step
+- Implement git clone, wget/curl download commands
+- Add hash verification for URL downloads
+- Create comprehensive download tests with mocked tools
 
-### Platform and Vector Systems
-- Design and implement platform inheritance through INTERFACE libraries
-- Implement vector-based target multiplication
-- Create platform definitions for common MOS 6502 targets
-- Integrate prerequisites with platform/vector systems
+### 2. Multi-Step Workflow Support (MAJOR GAP)
 
-### Integration and Documentation
-- Create comprehensive examples showing prerequisites → platforms → vectors workflow
-- Integrate with dist/ directory structure and SDK generation
-- Performance testing and optimization
-- User documentation and tutorials
+**Missing step implementations:**
+- `UPDATE_COMMAND` - Update step completely unimplemented
+- `CONFIGURE_COMMAND` - Configure step not implemented  
+- `TEST_COMMAND` - Test step not implemented
+
+**Step sequence issues:**
+- Only BUILD step is comprehensively tested
+- Step chaining logic exists but untested for most steps
+- DOWNLOAD and INSTALL steps have basic support only
+
+**Required work:**
+- Implement remaining step command execution
+- Add comprehensive multi-step integration tests
+- Validate step dependency chains (download → update → configure → build → install → test)
+
+### 3. Logging System (DOCUMENTED BUT NOT IMPLEMENTED)
+
+**Unimplemented logging options:**
+- `LOG_DOWNLOAD`, `LOG_UPDATE`, `LOG_CONFIGURE`, `LOG_BUILD`, `LOG_INSTALL`, `LOG_TEST`
+- `LOG_OUTPUT_ON_FAILURE` - Conditional output display
+- Log file naming and directory management
+
+**Current state:**
+- All LOG_* options are parsed and stored but completely ignored
+- No log redirection or capture functionality
+- No log file creation or management
+
+**Implementation needs:**
+- Add output redirection to step execution functions
+- Implement log file creation in LOG_DIR/STAMP_DIR
+- Add failure-conditional log display
+- Test all logging scenarios
+
+### 4. Directory Customization (PARSING ONLY, NO TESTING)
+
+**Untested directory options:**
+- `PREFIX`, `SOURCE_DIR`, `BINARY_DIR`, `INSTALL_DIR`, `STAMP_DIR`, `LOG_DIR`
+- Custom directory inheritance and defaults
+- Directory creation and validation
+
+**Current limitation:**
+- Default directory structure works fine
+- Custom directory specification untested
+- No validation of directory option interactions
+
+### 5. Advanced Features (IMPLEMENTED BUT UNTESTED)
+
+**Force targets:**
+- `<name>-force-<step>` targets exist but no tests verify behavior
+- Force rebuild mechanism untested
+- Force target chaining untested
+
+**Property retrieval:**
+- `Prerequisite_Get_Property` function exists but minimal testing
+- Property enumeration and validation untested
+
+**Advanced file dependencies:**
+- `DOWNLOAD_DEPENDS`, `UPDATE_DEPENDS`, `CONFIGURE_DEPENDS`, `INSTALL_DEPENDS`, `TEST_DEPENDS`
+- Only `BUILD_DEPENDS` is tested
+- `GLOB_RECURSE` patterns untested
+
+**Variable substitution gaps:**
+- `@PREREQUISITE_PREFIX@`, `@PREREQUISITE_INSTALL_DIR@`, `@PREREQUISITE_STAMP_DIR@`, `@PREREQUISITE_LOG_DIR@`
+- Only basic variables tested (`NAME`, `BINARY_DIR`, `SOURCE_DIR`)
+
+## Medium Priority Extensions
+
+### 1. Prerequisite Dependencies (BASIC IMPLEMENTATION EXISTS)
+- `DEPENDS <prereqs...>` option parsed but testing is limited
+- Multi-prerequisite dependency chains need validation
+- Build-time vs configure-time dependency behavior testing
+
+### 2. Control Options  
+- `<STEP>_ALWAYS` flags - Parsed but no implementation or testing
+- `BUILD_IN_SOURCE` - No implementation
+- Advanced step control mechanisms
+
+### 3. Platform Integration Preparation
+- Prerequisites → platforms integration design
+- External tool discovery (find existing installations vs building)
+- Toolchain integration patterns

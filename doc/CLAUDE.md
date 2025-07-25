@@ -162,8 +162,6 @@ This project values careful planning, objective analysis, and precise technical 
 
 ## Prerequisites System Implementation Status
 
-**CRITICAL: The basic prerequisites system is WORKING as of July 2025.**
-
 ### What's Implemented and Working
 - **Core architecture**: Dual execution model (configure-time + build-time) is fully functional
 - **Property storage**: Uses global properties with pattern `_PREREQUISITE_${name}_${property}` (like ExternalProject/FetchContent)
@@ -181,10 +179,52 @@ This project values careful planning, objective analysis, and precise technical 
 4. **Variable lists**: `_PREREQUISITE_STEPS` and `_PREREQUISITE_SUBSTITUTION_VARS` drive loops to reduce duplication
 
 ### Critical Remaining Work (HIGH PRIORITY)
-1. **Variable substitution in build commands**: Currently only works for immediate execution, not build-time
-2. **File dependency timestamp checking**: Currently always runs if `*_DEPENDS` present
-3. **Logging support**: `LOG_*` options parsed but ignored
-4. **Validation**: Self-referential stamp pattern needs robustness testing
+1. **Logging support**: `LOG_*` options parsed but ignored
+2. **Validation**: Self-referential stamp pattern needs robustness testing
+
+### CMake Download and Extraction Implementation Patterns
+
+**IMPORTANT**: When implementing download and extraction functionality for Prerequisites (GIT_REPOSITORY, URL, URL_HASH, archive extraction), follow CMake's proven patterns from FetchContent and ExternalProject:
+
+**Core Strategy - Use Built-in CMake Commands:**
+- `file(DOWNLOAD)` for all HTTP/HTTPS/FTP downloads (NOT wget/curl)
+- `${CMAKE_COMMAND} -E tar` for all extractions (NOT external tar/unzip/7z)
+- `find_package(Git)` and `GIT_EXECUTABLE` for Git operations
+- This ensures portability across all CMake-supported platforms without external tool dependencies
+
+**Archive Detection Pattern:**
+```cmake
+# File extension regex pattern matching from ExternalProject
+if(filename MATCHES "(\\.|=)(7z|tar\\.bz2|tar\\.gz|tar\\.xz|tbz2|tgz|txz|zip)$")
+    # Compressed archives
+endif()
+if(filename MATCHES "(\\.|=)tar$") 
+    # Uncompressed tar
+endif()
+```
+
+**Supported Archive Types:**
+- `.tar`, `.tar.gz/.tgz`, `.tar.bz2/.tbz2`, `.tar.xz/.txz`, `.zip`, `.7z`
+
+**Smart Extraction Logic:**
+- Extract to temporary directory first
+- Detect single top-level directory in archives
+- Automatically strip unnecessary nesting levels
+- Use `file(RENAME)` to move to final location
+
+**Download Implementation:**
+- Multi-URL fallback support with `foreach(url @REMOTE@)`
+- Built-in retry logic and exponential backoff
+- Hash verification with `check_file_hash()`
+- Use template `.cmake.in` files for complex operations
+
+**Key Principles:**
+1. **Self-contained**: No external tool dependencies beyond git
+2. **Portable**: Works identically across all platforms where CMake runs
+3. **Robust**: Multi-URL fallback, retry logic, hash verification
+4. **Template-driven**: Use `.cmake.in` files for complex operations
+
+This is the proven, battle-tested approach used by millions of CMake projects. Do not reinvent archive handling or download mechanisms.
 
 ### Files to Examine First
 - `dist/cmake/Prerequisite.cmake` - Main implementation (functional but incomplete)
@@ -194,4 +234,4 @@ This project values careful planning, objective analysis, and precise technical 
 
 ## Immediate Next Steps
 
-IMMEDIATELY READ EVERY SINGLE .MD FILE IN THE PROJECT, COMPLETELY.  You will be checked on your knowledge of the contents on these files.  If you are not able to answer questions about the contents of these files, your instance will be deleted and you will be replaced with another instance that actually reads these files.
+IMMEDIATELY READ EVERY SINGLE .MD, .CMAKE, and .TXT FILE IN THE PROJECT, COMPLETELY.  You will be checked on your knowledge of the contents on these files.  If you are not able to answer questions about the contents of these files, your instance will be deleted and you will be replaced with another instance that actually reads these files.
