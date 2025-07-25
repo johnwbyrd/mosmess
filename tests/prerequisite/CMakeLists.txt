@@ -65,6 +65,18 @@ function(add_prerequisite_test TEST_NAME)
     endif()
 endfunction()
 
-# Basic functionality tests
-add_prerequisite_test(hello_immediate)
-add_prerequisite_test(hello_deferred COMMAND "--target hello_deferred-build")
+# Simple functionality tests
+add_prerequisite_test(simple/immediate)
+add_prerequisite_test(simple/deferred COMMAND "--target deferred-build")
+
+# Stamp file behavior tests
+add_prerequisite_test(stamp/behavior COMMAND "--target test_stamps")
+
+# Advanced stamp behavior tests that will FAIL if stamps don't work
+add_prerequisite_test(stamp/incremental COMMAND "--target verify_no_rerun")
+add_prerequisite_test(stamp/reconfig COMMAND "--target verify_reconfig") 
+add_prerequisite_test(stamp/missing COMMAND "--target test_missing_stamp")
+
+# File dependency tracking tests
+add_prerequisite_test(stamp/file_deps COMMAND "--target test_file_deps")
+add_prerequisite_test(stamp/file_timestamp COMMAND "--target test_timestamp_behavior")

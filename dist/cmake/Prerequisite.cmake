@@ -463,6 +463,63 @@ function(_Prerequisite_Process_Steps name)
       continue()
     endif()
     
+    # Step 2: Process file dependencies for this step
+    get_property(step_depends GLOBAL PROPERTY _PREREQUISITE_${name}_${step}_DEPENDS)
+    set(uses_file_deps FALSE)
+    set(resolved_file_deps "")
+    
+    if(step_depends)
+      set(uses_file_deps TRUE)
+      
+      # Expand @PREREQUISITE_*@ variables in patterns
+      set(expanded_patterns "")
+      foreach(pattern ${step_depends})
+        foreach(var ${_PREREQUISITE_SUBSTITUTION_VARS})
+          string(REPLACE "@PREREQUISITE_${var}@" "${${var}}" pattern "${pattern}")
+        endforeach()
+        list(APPEND expanded_patterns "${pattern}")
+      endforeach()
+      
+      # Process GLOB/GLOB_RECURSE patterns
+      set(glob_mode "")
+      set(current_patterns "")
+      
+      foreach(arg ${expanded_patterns})
+        if(arg STREQUAL "GLOB" OR arg STREQUAL "GLOB_RECURSE")
+          # Process any accumulated patterns with previous mode
+          if(glob_mode AND current_patterns)
+            if(glob_mode STREQUAL "GLOB")
+              file(GLOB pattern_files ${current_patterns})
+            else()
+              file(GLOB_RECURSE pattern_files ${current_patterns})
+            endif()
+            list(APPEND resolved_file_deps ${pattern_files})
+          endif()
+          # Start new glob mode
+          set(glob_mode "${arg}")
+          set(current_patterns "")
+        else()
+          # Accumulate patterns for current mode
+          list(APPEND current_patterns "${arg}")
+        endif()
+      endforeach()
+      
+      # Process final batch of patterns
+      if(glob_mode AND current_patterns)
+        if(glob_mode STREQUAL "GLOB")
+          file(GLOB pattern_files ${current_patterns})
+        else()
+          file(GLOB_RECURSE pattern_files ${current_patterns})
+        endif()
+        list(APPEND resolved_file_deps ${pattern_files})
+      endif()
+      
+      # Verify we found files (zero matches should be fatal error)
+      if(NOT resolved_file_deps)
+        message(FATAL_ERROR "Prerequisite ${name}: ${step}_DEPENDS patterns matched no files: ${expanded_patterns}")
+      endif()
+    endif()
+    
     # Set up paths for this step
     set(stamp_file "${STAMP_DIR}/${name}-${step}")
     
@@ -471,8 +528,18 @@ function(_Prerequisite_Process_Steps name)
       set(needs_to_run FALSE)
       
       if(uses_file_deps)
-        # TODO: Compare file timestamps - for now, always run
-        set(needs_to_run TRUE)
+        # Compare file timestamps with stamp file
+        if(NOT EXISTS "${stamp_file}")
+          set(needs_to_run TRUE)
+        else()
+          # Check if any dependency files are newer than stamp
+          foreach(dep_file ${resolved_file_deps})
+            if(EXISTS "${dep_file}" AND "${dep_file}" IS_NEWER_THAN "${stamp_file}")
+              set(needs_to_run TRUE)
+              break()
+            endif()
+          endforeach()
+        endif()
       else()
         # Check if stamp file exists
         if(NOT EXISTS "${stamp_file}")
@@ -493,14 +560,14 @@ function(_Prerequisite_Process_Steps name)
         message(STATUS "Prerequisite ${name}: Running ${step} step immediately")
         execute_process(
           COMMAND ${substituted_command}
-          WORKING_DIRECTORY "${binary_dir}"
+          WORKING_DIRECTORY "${BINARY_DIR}"
           RESULT_VARIABLE result
         )
         
         if(NOT result EQUAL 0)
           # Clean up stamps for this and subsequent steps
           foreach(cleanup_step ${_PREREQUISITE_STEPS})
-            file(REMOVE "${stamp_dir}/${name}-${cleanup_step}")
+            file(REMOVE "${STAMP_DIR}/${name}-${cleanup_step}")
             if(cleanup_step STREQUAL step)
               break()
             endif()
@@ -516,66 +583,39 @@ function(_Prerequisite_Process_Steps name)
     # Step 4: Create build-time targets
     string(TOLOWER "${step}" step_lower)
     
+    # Prepare dependencies for add_custom_command
+    set(step_deps "")
+    if(previous_stamp_file)
+      list(APPEND step_deps "${previous_stamp_file}")
+    endif()
     if(uses_file_deps)
-      # File dependency tracking - no stamp files
-      set(step_deps "")
-      if(previous_stamp_file)
-        list(APPEND step_deps "${previous_stamp_file}")
-      endif()
-      # TODO: Process file dependency patterns properly
-      list(APPEND step_deps ${step_depends})
-      
-      # Create custom target that runs the command directly
-      add_custom_target(${name}-${step_lower}
-        COMMAND ${step_command}
-        DEPENDS ${step_deps}
-        WORKING_DIRECTORY "${binary_dir}"
-        COMMENT "Prerequisite ${name}: Running ${step} step"
-      )
-      
-      # No stamp file is created or used for this step
-      set(previous_stamp_file "")
-    else()
-      # Stamp-based tracking
-      set(step_deps "")
-      if(previous_stamp_file)
-        list(APPEND step_deps "${previous_stamp_file}")
-      endif()
-      
-      # Create the custom command that produces a stamp file
-      add_custom_command(
-        OUTPUT "${stamp_file}"
-        COMMAND ${step_command}
-        COMMAND ${CMAKE_COMMAND} -E touch "${stamp_file}"
-        DEPENDS ${step_deps}
-        WORKING_DIRECTORY "${binary_dir}"
-        COMMENT "Prerequisite ${name}: Running ${step} step"
-      )
-      
-      # Create named target that depends on the stamp file
-      add_custom_target(${name}-${step_lower}
-        DEPENDS "${stamp_file}"
-      )
-      
-      # Update previous stamp for next iteration
-      set(previous_stamp_file "${stamp_file}")
+      list(APPEND step_deps ${resolved_file_deps})
     endif()
     
-    # Create force target
-    if(uses_file_deps)
-      # For file dependency tracking, force target just runs the step
-      add_custom_target(${name}-force-${step_lower}
-        COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target ${name}-${step_lower}
-        COMMENT "Prerequisite ${name}: Force ${step} step"
-      )
-    else()
-      # For stamp tracking, force target removes stamp then runs
-      add_custom_target(${name}-force-${step_lower}
-        COMMAND ${CMAKE_COMMAND} -E remove "${stamp_file}"
-        COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target ${name}-${step_lower}
-        COMMENT "Prerequisite ${name}: Force ${step} step"
-      )
-    endif()
+    # Create the custom command that produces a stamp file
+    add_custom_command(
+      OUTPUT "${stamp_file}"
+      COMMAND ${step_command}
+      COMMAND ${CMAKE_COMMAND} -E touch "${stamp_file}"
+      DEPENDS ${step_deps}
+      WORKING_DIRECTORY "${BINARY_DIR}"
+      COMMENT "Prerequisite ${name}: Running ${step} step"
+    )
+    
+    # Create named target that depends on the stamp file
+    add_custom_target(${name}-${step_lower}
+      DEPENDS "${stamp_file}"
+    )
+    
+    # Update previous stamp for next iteration
+    set(previous_stamp_file "${stamp_file}")
+    
+    # Create force target (always removes stamp then runs)
+    add_custom_target(${name}-force-${step_lower}
+      COMMAND ${CMAKE_COMMAND} -E remove "${stamp_file}"
+      COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target ${name}-${step_lower}
+      COMMENT "Prerequisite ${name}: Force ${step} step"
+    )
   endforeach()
   
   # Handle prerequisite-level dependencies

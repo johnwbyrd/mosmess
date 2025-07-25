@@ -12,16 +12,17 @@
 ## Immediate Next Steps
 
 ### 1. Prerequisites System Refinement (HIGH PRIORITY)
-1. **Variable substitution in build-time commands** - currently only works for immediate execution
-2. **File dependency timestamp checking** - currently always runs if `*_DEPENDS` specified
+1. **CRITICAL: Verify immediate execution actually works** - may not be executing during configure time as expected
+2. **Variable substitution in build-time commands** - currently only works for immediate execution
 3. **Logging support** - `LOG_*` options are parsed but ignored
 4. **Validation of circular stamp dependencies** - verify self-referential pattern is robust
 
 ### 2. Testing and Validation
 - Expand test coverage for edge cases and error conditions
-- Test file dependency tracking when implemented
+- ✅ Test file dependency tracking - IMPLEMENTED with proper timestamp comparison
 - Validate prerequisite-to-prerequisite dependencies (DEPENDS option)
 - Test variable substitution in all contexts
+- **CRITICAL: Create test that proves immediate execution during configure time**
 
 ### 3. Key Implementation Notes for Future Work
 - Uses global properties for cross-function data sharing (like ExternalProject/FetchContent)
@@ -32,9 +33,9 @@
 ## Longer Term Goals
 
 ### Prerequisites System Completion
-- ✅ ~~Complete Prerequisite_Add() with dual execution model~~ (DONE)
+- ⚠️ Complete Prerequisite_Add() with dual execution model - immediate execution may be broken
 - ✅ ~~Implement stamp-based dependency tracking~~ (DONE) 
-- 🔄 Complete file-based dependency tracking with proper timestamp comparison
+- ✅ ~~Complete file-based dependency tracking with proper timestamp comparison~~ (DONE)
 - 🔄 Add comprehensive logging and error handling
 - ✅ ~~Build inter-prerequisite dependency management~~ (basic implementation done)
 

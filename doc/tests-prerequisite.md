@@ -7,11 +7,28 @@ This document outlines the comprehensive test strategy for the CMake prerequisit
 ## Test Architecture
 
 ### Directory Structure
+
+**Current Implementation (July 2025):**
 ```
-tests/
-├── unit/                  # Individual function validation
-├── execution/             # Dual execution model tests  
-├── tracking/              # Dependency tracking (stamps vs files)
+tests/prerequisite/
+├── CMakeLists.txt         # Test suite runner with add_prerequisite_test()
+├── simple/                # Basic functionality tests
+│   ├── immediate/         # Configure-time execution test
+│   └── deferred/          # Build-time execution test
+└── stamp/                 # Stamp file behavior validation
+    ├── behavior/          # Basic stamp creation test
+    ├── incremental/       # Counter-based re-execution detection
+    ├── reconfig/          # Reconfiguration behavior validation  
+    └── missing/           # Missing stamp rebuild testing
+```
+
+**Planned Future Structure:**
+```
+tests/prerequisite/
+├── simple/                # IMPLEMENTED - Basic functionality
+├── stamp/                 # IMPLEMENTED - Stamp file behavior  
+├── execution/             # Dual execution model edge cases
+├── tracking/              # File-based dependency tracking
 ├── dependencies/          # Inter-prerequisite relationships
 ├── steps/                 # Step execution and sequencing
 ├── integration/           # Real-world scenarios with mocks
@@ -212,11 +229,11 @@ The prerequisites system has unique testing challenges that drive our framework 
 
 ## Implementation Priority
 
-1. **Phase 1:** Unit tests and basic execution model
-2. **Phase 2:** Dependency tracking (stamps and files)
-3. **Phase 3:** Variable substitution and inter-prerequisite dependencies
-4. **Phase 4:** Error handling and platform compatibility
-5. **Phase 5:** Integration scenarios and edge cases
+1. **Phase 1:** COMPLETE - Unit tests and basic execution model
+2. **Phase 2:** PARTIAL - Dependency tracking (stamps complete, files pending)
+3. **Phase 3:** IN PROGRESS - Variable substitution and inter-prerequisite dependencies
+4. **Phase 4:** PLANNED - Error handling and platform compatibility
+5. **Phase 5:** PLANNED - Integration scenarios and edge cases
 
 ## Success Criteria
 
@@ -229,9 +246,53 @@ The test suite is complete when:
 - Test suite runs in reasonable time (<5 minutes total)
 - Tests are maintainable and well-documented
 
-## Current Status
+## Current Implementation Status (July 2025)
 
-See `doc/todo.md` for current development status and next steps.
+### IMPLEMENTED - Basic Test Infrastructure
+- **CTest Integration**: Uses `add_prerequisite_test()` function for process isolation
+- **Cross-generator Support**: Tests pass identically with make and ninja
+- **Test Organization**: Organized into `simple/` and `stamp/` directories
+
+### IMPLEMENTED - Simple Functionality Tests (`simple/`)
+- **`immediate`**: Validates configure-time execution before `project()`
+- **`deferred`**: Validates build-time target creation after `project()`
+- **Property Retrieval**: Tests `Prerequisite_Get_Property()` functionality
+- **Debug Output**: Validates `_Prerequisite_Debug_Dump()` function
+
+### IMPLEMENTED - Stamp File Behavior Tests (`stamp/`)
+
+**Critical Tests That WILL FAIL if Stamps Break:**
+
+- **`incremental`**: Uses execution counters that fail with `"STAMP FAILURE: X step executed N times, expected 1"` if any step runs more than once
+- **`reconfig`**: Tracks executions across reconfigurations, fails with `"STAMP FAILURE: Prerequisite executed N times across reconfigurations"` if steps re-run when stamps exist  
+- **`missing`**: Removes stamps and verifies rebuild, fails with `"STAMP FAILURE: Missing stamp did not trigger rebuild"` if outputs aren't recreated
+- **`behavior`**: Basic validation that stamps are created and respected
+
+### CURRENT LIMITATIONS
+- **File-based dependency tracking**: Not yet implemented (only stamp-based works)
+- **Variable substitution**: Works for immediate execution, not for build-time commands
+- **Logging support**: `LOG_*` options parsed but ignored
+- **Error handling**: Limited validation of failure scenarios
+- **Inter-prerequisite dependencies**: Basic implementation, needs comprehensive testing
+
+### NEXT PRIORITY AREAS
+1. **File dependency tracking tests** (`tracking/` directory)
+2. **Variable substitution validation** in build-time contexts
+3. **Inter-prerequisite dependency tests** (`dependencies/` directory)
+4. **Error handling and recovery tests** (`error/` directory)
+5. **Integration scenarios with mocks** (`integration/` directory)
+
+### Test Execution Summary
+```bash
+# Run all tests
+cd build && cmake ../tests/prerequisite && ctest
+
+# Current results: 11/11 tests passing
+# Total execution time: ~0.75 seconds
+# Generators tested: Unix Makefiles, Ninja
+```
+
+See `doc/todo.md` for detailed development status and implementation priorities.
 
 ## Notes for Implementation
 
