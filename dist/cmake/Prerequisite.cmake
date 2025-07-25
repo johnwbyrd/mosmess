@@ -1,4 +1,5 @@
 # CMake Prerequisites System
+# Author: John Byrd, johnwbyrd at gmail dot com
 #
 # The prerequisites system lets you build external dependencies during CMake's 
 # configuration phase, before the project() command runs. This is crucial when 
@@ -236,16 +237,31 @@ Functions
 # Can be changed in one place to avoid namespace collisions
 set(_PREREQUISITE_PREFIX "_PREREQUISITE")
 
+# Debug flag - set to TRUE to enable debug messages
+set(_PREREQUISITE_DEBUG FALSE CACHE BOOL
+    "Enable Prerequisites debug messages")
+
 # Internal step list - defines the order and names of all prerequisite steps
 set(_PREREQUISITE_STEPS DOWNLOAD UPDATE CONFIGURE BUILD INSTALL TEST)
 
 # Internal substitution variables - defines all @PREREQUISITE_*@ variable names
-set(_PREREQUISITE_SUBSTITUTION_VARS NAME PREFIX SOURCE_DIR BINARY_DIR INSTALL_DIR STAMP_DIR LOG_DIR)
+set(_PREREQUISITE_SUBSTITUTION_VARS NAME PREFIX SOURCE_DIR BINARY_DIR
+    INSTALL_DIR STAMP_DIR LOG_DIR)
+
+# Debug message function - only prints when debugging is enabled
+function(_Prerequisite_Debug message)
+  if(_PREREQUISITE_DEBUG)
+    message(STATUS "PREREQUISITE_DEBUG: ${message}")
+  endif()
+endfunction()
 
 # Map each step to a new string by applying prefix and suffix
-# Transforms each step in _PREREQUISITE_STEPS using the pattern: prefix + step + suffix
-# Example: _Prerequisite_Map_Steps("LOG_" "" result) -> LOG_DOWNLOAD, LOG_UPDATE, etc.
-# Example: _Prerequisite_Map_Steps("" "_COMMAND" result) -> DOWNLOAD_COMMAND, UPDATE_COMMAND, etc.
+# Transforms each step in _PREREQUISITE_STEPS using the pattern:
+# prefix + step + suffix
+# Example: _Prerequisite_Map_Steps("LOG_" "" result) ->
+#   LOG_DOWNLOAD, LOG_UPDATE, etc.
+# Example: _Prerequisite_Map_Steps("" "_COMMAND" result) ->
+#   DOWNLOAD_COMMAND, UPDATE_COMMAND, etc.
 function(_Prerequisite_Map_Steps prefix suffix out_var)
   set(result "")
   foreach(step ${_PREREQUISITE_STEPS})
@@ -293,13 +309,73 @@ function(_Prerequisite_Debug_Dump name)
   message(STATUS "=== End Properties for ${name} ===")
 endfunction()
 
-# Check if we're running at configure time (before project())
-# Returns TRUE if CMAKE_PROJECT_NAME is not defined (configure time)
-# Returns FALSE if CMAKE_PROJECT_NAME is defined (build time)
+# Determine if we're running at configure time (before project()) vs build time
+# (after project())
+#
+# This function solves a critical problem in the prerequisites system:
+# distinguishing between configure-time execution (when prerequisites should run
+# immediately) and build-time execution (when prerequisites should create CMake
+# targets for later execution).
+#
+# The prerequisites system needs to support dual execution modes:
+# 1. CONFIGURE TIME: When Prerequisite_Add() is called BEFORE project(),
+#    prerequisites must execute immediately to bootstrap tools (like compilers)
+#    that project() will need.
+# 2. BUILD TIME: When Prerequisite_Add() is called AFTER project(),
+#    prerequisites should create normal CMake targets that execute during the
+#    build phase.
+#
+# THE DETECTION APPROACH:
+# The function uses a two-stage check to handle both standalone and nested
+# CMake contexts:
+#
+# 1. First, check if CMAKE_PROJECT_NAME is empty - this handles the common case
+#    where no project() has been called in the current execution context.
+#
+# 2. Second, for nested contexts (like CTest), check if CMAKE_SOURCE_DIR differs
+#    from CMAKE_CURRENT_SOURCE_DIR - this indicates we're in a subdirectory
+#    that hasn't called project() yet, even if a parent process has.
+#
+# EXECUTION SCENARIOS:
+#
+# Scenario 1: Standalone CMake execution
+#   cmake_minimum_required(VERSION 3.25)
+#   Prerequisite_Add(my_prereq ...)  # <- CMAKE_PROJECT_NAME="" -> CONFIGURE
+#   project(MyProject)                # <- Sets CMAKE_PROJECT_NAME
+#   Prerequisite_Add(my_prereq2 ...)  # <- CMAKE_PROJECT_NAME set -> BUILD TIME
+#
+# Scenario 2: CTest execution (nested context)
+#   Parent process: project(TestRunner) -> sets CMAKE_PROJECT_NAME="TestRunner"
+#   Child process spawned by CTest:
+#     cmake_minimum_required(VERSION 3.25)
+#     # CMAKE_PROJECT_NAME="" (child process starts with empty project name)
+#     # CMAKE_SOURCE_DIR != CMAKE_CURRENT_SOURCE_DIR (different directories)
+#     Prerequisite_Add(test_prereq ...) # <- Either condition -> CONFIGURE TIME
+#     project(MyTest)                   # <- Sets CMAKE_PROJECT_NAME for context
+#     Prerequisite_Add(test_prereq2 ...) # <- Same directory -> BUILD TIME
+#
+# This approach correctly handles both standalone CMake execution and nested
+# contexts like testing frameworks, ensuring prerequisites run immediately
+# when needed for bootstrapping and defer to build-time targets otherwise.
+#
+# Returns TRUE if no project() has been called in the current context
+# (configure time)
+# Returns FALSE if project() has been called in the current context
+# (build time)
 function(_Prerequisite_Is_Configure_Time out_var)
-  if(NOT DEFINED CMAKE_PROJECT_NAME)
+  _Prerequisite_Debug("_Prerequisite_Is_Configure_Time: CMAKE_PROJECT_NAME='${CMAKE_PROJECT_NAME}' CMAKE_SOURCE_DIR='${CMAKE_SOURCE_DIR}' CMAKE_CURRENT_SOURCE_DIR='${CMAKE_CURRENT_SOURCE_DIR}'")
+  
+  # Check if CMAKE_PROJECT_NAME is set - this indicates project() has been
+  # called in this context. In nested contexts, we need to check if the
+  # current source directory is the same as the top-level source directory.
+  if(NOT CMAKE_PROJECT_NAME OR CMAKE_PROJECT_NAME STREQUAL "")
+    _Prerequisite_Debug("  -> returning TRUE (configure time: no project() called - CMAKE_PROJECT_NAME empty)")
+    set(${out_var} TRUE PARENT_SCOPE)
+  elseif(NOT "${CMAKE_SOURCE_DIR}" STREQUAL "${CMAKE_CURRENT_SOURCE_DIR}")
+    _Prerequisite_Debug("  -> returning TRUE (configure time: CMAKE_SOURCE_DIR != CMAKE_CURRENT_SOURCE_DIR)")
     set(${out_var} TRUE PARENT_SCOPE)
   else()
+    _Prerequisite_Debug("  -> returning FALSE (build time: project() called in this directory)")
     set(${out_var} FALSE PARENT_SCOPE)
   endif()
 endfunction()
@@ -307,7 +383,8 @@ endfunction()
 # Parse all arguments using cmake_parse_arguments
 # - Extract options like IMMEDIATE, BUILD_ALWAYS
 # - Extract single-value args like PREFIX, SOURCE_DIR, etc.
-# - Extract multi-value args like DEPENDS, COMMANDS, and all step-specific options
+# - Extract multi-value args like DEPENDS, COMMANDS, and all step-specific
+#   options
 # - Store all parsed arguments as global properties using pattern:
 #   ${_PREREQUISITE_PREFIX}_${name}_${property_name}
 # - This allows other helper functions to retrieve arguments using
@@ -321,7 +398,7 @@ function(_Prerequisite_Parse_Arguments name)
   _Prerequisite_Map_Steps("" "_DEPENDS" step_depends_opts)
   
   # Set up argument categories for cmake_parse_arguments
-  set(options 
+  set(options
     GIT_SHALLOW DOWNLOAD_NO_EXTRACT UPDATE_DISCONNECTED BUILD_IN_SOURCE
   )
   
@@ -339,32 +416,39 @@ function(_Prerequisite_Parse_Arguments name)
   )
   
   # Parse arguments starting from index 1 (skip the name parameter)
-  cmake_parse_arguments(PARSE_ARGV 1 PA "${options}" "${oneValueArgs}" "${multiValueArgs}")
+  cmake_parse_arguments(PARSE_ARGV 1 PA "${options}" "${oneValueArgs}"
+      "${multiValueArgs}")
   
   # Store each parsed argument as a global property
   foreach(option ${options})
     if(PA_${option})
-      set_property(GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_${option} TRUE)
+      set_property(GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_${option}
+          TRUE)
     endif()
   endforeach()
   
   foreach(arg ${oneValueArgs})
     if(DEFINED PA_${arg})
-      set_property(GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_${arg} "${PA_${arg}}")
+      set_property(GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_${arg}
+          "${PA_${arg}}")
     endif()
   endforeach()
   
   foreach(arg ${multiValueArgs})
     if(DEFINED PA_${arg})
-      set_property(GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_${arg} "${PA_${arg}}")
+      set_property(GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_${arg}
+          "${PA_${arg}}")
     endif()
   endforeach()
   
   # Validate argument combinations
-  get_property(has_git GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_GIT_REPOSITORY SET)
-  get_property(has_url GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_URL SET)
+  get_property(has_git GLOBAL PROPERTY
+      ${_PREREQUISITE_PREFIX}_${name}_GIT_REPOSITORY SET)
+  get_property(has_url GLOBAL PROPERTY
+      ${_PREREQUISITE_PREFIX}_${name}_URL SET)
   if(has_git AND has_url)
-    message(FATAL_ERROR "Prerequisite ${name}: GIT_REPOSITORY and URL are mutually exclusive")
+    message(FATAL_ERROR
+        "Prerequisite ${name}: GIT_REPOSITORY and URL are mutually exclusive")
   endif()
 endfunction()
 
@@ -373,11 +457,13 @@ endfunction()
 # - Default SOURCE_DIR, BINARY_DIR, STAMP_DIR, etc. based on PREFIX
 function(_Prerequisite_Setup_Directories name)
   # Set up directory defaults - skip NAME since it's not a directory
-  set(directory_vars PREFIX SOURCE_DIR BINARY_DIR INSTALL_DIR STAMP_DIR LOG_DIR)
+  set(directory_vars PREFIX SOURCE_DIR BINARY_DIR INSTALL_DIR STAMP_DIR
+      LOG_DIR)
   
   # First pass: compute defaults
   foreach(var ${directory_vars})
-    get_property(user_value GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_${var})
+    get_property(user_value GLOBAL PROPERTY
+        ${_PREREQUISITE_PREFIX}_${name}_${var})
     
     if(user_value)
       set(${var} "${user_value}")
@@ -401,7 +487,8 @@ function(_Prerequisite_Setup_Directories name)
   
   # Second pass: store final values and create directories
   foreach(var ${directory_vars})
-    set_property(GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_${var} "${${var}}")
+    set_property(GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_${var}
+        "${${var}}")
     file(MAKE_DIRECTORY "${${var}}")
   endforeach()
 endfunction()
@@ -414,7 +501,8 @@ function(_Prerequisite_Substitute_Variables input_list out_var)
     set(substituted "${item}")
     foreach(var ${_PREREQUISITE_SUBSTITUTION_VARS})
       if(DEFINED ${var})
-        string(REPLACE "@PREREQUISITE_${var}@" "${${var}}" substituted "${substituted}")
+        string(REPLACE "@PREREQUISITE_${var}@" "${${var}}" substituted
+            "${substituted}")
       endif()
     endforeach()
     list(APPEND result "${substituted}")
@@ -423,7 +511,8 @@ function(_Prerequisite_Substitute_Variables input_list out_var)
 endfunction()
 
 # Resolve file dependencies for a step using glob patterns
-function(_Prerequisite_Resolve_File_Dependencies patterns out_files out_uses_file_deps)
+function(_Prerequisite_Resolve_File_Dependencies patterns out_files
+    out_uses_file_deps)
   set(resolved_files "")
   set(uses_file_deps FALSE)
   
@@ -474,7 +563,8 @@ function(_Prerequisite_Resolve_File_Dependencies patterns out_files out_uses_fil
 endfunction()
 
 # Execute a step immediately during configure time
-function(_Prerequisite_Execute_Immediate name step command working_dir stamp_file)
+function(_Prerequisite_Execute_Immediate name step command working_dir
+    stamp_file)
   _Prerequisite_Substitute_Variables("${command}" substituted_command)
   
   message(STATUS "Prerequisite ${name}: Running ${step} step immediately")
@@ -487,7 +577,8 @@ function(_Prerequisite_Execute_Immediate name step command working_dir stamp_fil
   if(NOT result EQUAL 0)
     # Clean up stamps for this and subsequent steps
     foreach(cleanup_step ${_PREREQUISITE_STEPS})
-      get_property(stamp_dir GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_STAMP_DIR)
+      get_property(stamp_dir GLOBAL PROPERTY
+          ${_PREREQUISITE_PREFIX}_${name}_STAMP_DIR)
       file(REMOVE "${stamp_dir}/${name}-${cleanup_step}")
       if(cleanup_step STREQUAL step)
         break()
@@ -534,7 +625,9 @@ endfunction()
 function(_Prerequisite_Process_Single_Step name step is_configure_time previous_stamp_file out_stamp_file)
   # Get step command
   get_property(step_command GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_${step}_COMMAND)
+  _Prerequisite_Debug("_Prerequisite_Process_Single_Step(${name}, ${step}) - step_command='${step_command}'")
   if(NOT step_command)
+    _Prerequisite_Debug("  No command for ${step} step, skipping")
     set(${out_stamp_file} "${previous_stamp_file}" PARENT_SCOPE)
     return()
   endif()
@@ -564,16 +657,20 @@ function(_Prerequisite_Process_Single_Step name step is_configure_time previous_
   
   # Immediate execution if at configure time
   if(is_configure_time)
+    _Prerequisite_Debug("  ${step} step: configure-time execution, checking if needs to run")
     set(needs_to_run FALSE)
     
     if(uses_file_deps)
       # Compare file timestamps with stamp file
+      _Prerequisite_Debug("  Using file dependencies: ${resolved_files}")
       if(NOT EXISTS "${stamp_file}")
+        _Prerequisite_Debug("  Stamp file missing: ${stamp_file}")
         set(needs_to_run TRUE)
       else()
         # Check if any dependency files are newer than stamp
         foreach(dep_file ${resolved_files})
           if(EXISTS "${dep_file}" AND "${dep_file}" IS_NEWER_THAN "${stamp_file}")
+            _Prerequisite_Debug("  Dependency file newer: ${dep_file}")
             set(needs_to_run TRUE)
             break()
           endif()
@@ -581,14 +678,19 @@ function(_Prerequisite_Process_Single_Step name step is_configure_time previous_
       endif()
     else()
       # Check if stamp file exists
+      _Prerequisite_Debug("  Using stamp-only dependencies")
       if(NOT EXISTS "${stamp_file}")
+        _Prerequisite_Debug("  Stamp file missing: ${stamp_file}")
         set(needs_to_run TRUE)
       endif()
     endif()
     
+    _Prerequisite_Debug("  needs_to_run=${needs_to_run}")
     if(needs_to_run)
       _Prerequisite_Execute_Immediate(${name} ${step} "${step_command}" "${BINARY_DIR}" "${stamp_file}")
     endif()
+  else()
+    _Prerequisite_Debug("  ${step} step: build-time only")
   endif()
   
   # Create build-time targets
@@ -610,6 +712,7 @@ endfunction()
 function(_Prerequisite_Process_Steps name)
   # Retrieve configure-time flag
   get_property(is_configure_time GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_IS_CONFIGURE_TIME)
+  _Prerequisite_Debug("_Prerequisite_Process_Steps(${name}) - is_configure_time=${is_configure_time}")
   
   # Set up variables for substitution (needed by helper functions)
   foreach(var ${_PREREQUISITE_SUBSTITUTION_VARS})
@@ -644,12 +747,13 @@ endfunction()
 
 function(Prerequisite_Add name)
   _Prerequisite_Is_Configure_Time(is_configure_time)
+  _Prerequisite_Debug("Prerequisite_Add(${name}) - is_configure_time=${is_configure_time}")
   set_property(GLOBAL PROPERTY ${_PREREQUISITE_PREFIX}_${name}_IS_CONFIGURE_TIME "${is_configure_time}")
   _Prerequisite_Parse_Arguments(${name} ${ARGN})
   _Prerequisite_Setup_Directories(${name})
   _Prerequisite_Process_Steps(${name})
   
-  message(STATUS "Prerequisite_Add(${name}) - stub implementation")
+  _Prerequisite_Debug("Prerequisite_Add(${name}) - processing complete")
 endfunction()
 
 function(Prerequisite_Get_Property name property output_variable)

@@ -84,3 +84,9 @@ add_prerequisite_test(stamp/file_timestamp COMMAND "--target test_timestamp_beha
 # Variable substitution tests
 add_prerequisite_test(substitution/immediate)
 add_prerequisite_test(substitution/deferred COMMAND "--target verify_deferred_substitution")
+
+# Systematic dependency tracking behavior tests
+add_prerequisite_test(dependency/basic_file_behavior COMMAND "--target test_basic_file_behavior")
+add_prerequisite_test(dependency/new_file_detection COMMAND "--target test_new_file_detection") 
+add_prerequisite_test(dependency/untracked_file_behavior COMMAND "--target test_untracked_file_behavior")
+add_prerequisite_test(dependency/file_vs_stamp_comparison COMMAND "--target test_file_vs_stamp_comparison")
